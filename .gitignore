@@ -50,3 +50,33 @@ images/raw/
 
 # Local env
 .env
+
+# PostgreSQL runtime
+data/db/pgdata/
+
+# Redis / appendonly
+data/cache/
+
+# Chrome profiles
+src/parsers/chrome_profile/
+src/parsers/chrome_profile_loads/
+
+# Models / checkpoints
+data/models/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Logs
+*.log
+logs/
+route_optimizer.log
+
+# Screenshots / images
+screenshots/
+*.png
+*.jpg
+*.jpeg
+*.gif
