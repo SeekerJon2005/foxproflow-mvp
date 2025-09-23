@@ -87,3 +87,9 @@ project_filelist.csv
 project_candidates_delete.csv
 project_largefiles.csv
 =4.5.0
+
+# Chrome profiles
+src/parsers/chrome_profile/
+src/parsers/chrome_profile_loads/
+src/parsers/chrome_profile_transport/
+src/parsers/cars_data/
