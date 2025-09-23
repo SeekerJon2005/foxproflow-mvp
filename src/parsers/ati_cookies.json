@@ -1,0 +1,62 @@
+[
+  {
+    "domain": ".ati.su",
+    "expiry": 1790054279,
+    "httpOnly": false,
+    "name": "wasCookieAccepted",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": false,
+    "value": "true"
+  },
+  {
+    "domain": "ati.su",
+    "expiry": 1758603371,
+    "httpOnly": false,
+    "name": "carrier_services_direction",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": false,
+    "value": "ofljgehqadbmkpc"
+  },
+  {
+    "domain": ".ati.su",
+    "expiry": 1766294218,
+    "httpOnly": true,
+    "name": "sid",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": true,
+    "value": "ec2b5bafffd143d5b88b2ea546f132d9"
+  },
+  {
+    "domain": ".ati.su",
+    "expiry": 1793078169,
+    "httpOnly": false,
+    "name": "did",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "Bsnygi0HOaYqhc7KsatuSMU2GY9xGNsqvvN27rNeAGg%3D"
+  },
+  {
+    "domain": ".ati.su",
+    "expiry": 1789622136,
+    "httpOnly": false,
+    "name": "ati_theme",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": false,
+    "value": "default-theme"
+  },
+  {
+    "domain": ".ati.su",
+    "expiry": 1793076970,
+    "httpOnly": false,
+    "name": "uicult2",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": false,
+    "value": "ru"
+  }
+]

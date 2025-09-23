@@ -1,0 +1,53 @@
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Tests / caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Data & caches
+data/cache/
+data/models/
+*.sqlite3
+*.db-journal
+
+# Logs
+logs/
+*.log
+route_optimizer.log
+
+# Screenshots & large binary artifacts
+screenshots/
+screens/
+img/raw/
+images/raw/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.webp
+*.tiff
+
+# Notebooks checkpoints
+.ipynb_checkpoints/
+
+# Local env
+.env

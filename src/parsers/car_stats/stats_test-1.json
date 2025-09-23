@@ -1,0 +1,15 @@
+{
+  "started_at": "2025-09-22T17:29:53.230420+00:00",
+  "finished_at": "2025-09-22T17:30:17.086488+00:00",
+  "region_name": "Тест 1",
+  "pages_total": 1,
+  "pages_ok": 1,
+  "pages_failed": 0,
+  "cards_total": 0,
+  "inserted": 0,
+  "updated": 0,
+  "db_errors": 0,
+  "parse_errors": 0,
+  "last_page": 1,
+  "duration_sec": 23.856068
+}
