@@ -80,3 +80,9 @@ screenshots/
 *.jpg
 *.jpeg
 *.gif
+
+# Reports from inventory tool
+PROJECT_INVENTORY.md
+project_filelist.csv
+project_candidates_delete.csv
+project_largefiles.csv
