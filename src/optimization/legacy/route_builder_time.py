@@ -7,12 +7,12 @@ import itertools
 import traceback
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
-from config import EXACT_DISTANCE_CACHE_PATH, HOURLY_DRIVING_SPEED, SERVICE_TIME_HOURS
-from models import Freight, Route, RouteSegment
-from geo_utils import approx_road_km
+from src.core.config import EXACT_DISTANCE_CACHE_PATH, HOURLY_DRIVING_SPEED, SERVICE_TIME_HOURS
+from src.core.models import Freight, Route, RouteSegment
+from src.core.geo_utils import approx_road_km
 # Для подхвата координат гаража/финиша при их отсутствии в данных:
 try:
-    from geo_utils import get_city_coordinates
+    from src.core.geo_utils import get_city_coordinates
 except Exception:
     get_city_coordinates = None
 

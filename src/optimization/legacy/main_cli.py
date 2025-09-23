@@ -1,7 +1,7 @@
 
 import datetime
-from route_builder_time import TimeAwareRouteBuilder
-from database import load_suitable_freights, init_database
+from src.optimization.legacy.route_builder_time import TimeAwareRouteBuilder
+from src.data_layer.database import load_suitable_freights, init_database
 def main():
     init_database()
     start_city = input("Город гаража (домашняя база): ").strip()

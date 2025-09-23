@@ -5,7 +5,7 @@ import logging
 import re
 import math
 from typing import List, Tuple, Dict, Any, Optional
-from config import CITIES_CACHE_PATH, ROAD_CURVATURE_FACTOR
+from src.core.config import CITIES_CACHE_PATH, ROAD_CURVATURE_FACTOR
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
