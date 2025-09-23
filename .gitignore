@@ -93,3 +93,5 @@ src/parsers/chrome_profile/
 src/parsers/chrome_profile_loads/
 src/parsers/chrome_profile_transport/
 src/parsers/cars_data/
+src/parsers/car_region_progress.json
+src/parsers/cars_data/
