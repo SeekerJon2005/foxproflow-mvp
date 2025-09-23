@@ -1,15 +1,17 @@
-# Python
+# Python artifacts
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
 *.so
-.venv/
-venv/
-env/
 *.egg-info/
 dist/
 build/
+
+# Virtual environments
+.venv/
+venv/
+env/
 
 # Editors / OS
 .idea/
@@ -21,18 +23,26 @@ build/
 .mypy_cache/
 .ruff_cache/
 
-# Data & caches
+# Databases & caches
+data/db/pgdata/
 data/cache/
 data/models/
 *.sqlite3
 *.db-journal
+
+# Parser working data
+src/parsers/cars_data/
+src/parsers/car_region_progress.json
+src/parsers/chrome_profile/
+src/parsers/chrome_profile_loads/
+src/parsers/chrome_profile_transport/
 
 # Logs
 logs/
 *.log
 route_optimizer.log
 
-# Screenshots & large binary artifacts
+# Screenshots & images
 screenshots/
 screens/
 img/raw/
@@ -48,50 +58,14 @@ images/raw/
 # Notebooks checkpoints
 .ipynb_checkpoints/
 
-# Local env
+# Local env/config
 .env
 
-# PostgreSQL runtime
-data/db/pgdata/
-
-# Redis / appendonly
-data/cache/
-
-# Chrome profiles
-src/parsers/chrome_profile/
-src/parsers/chrome_profile_loads/
-
-# Models / checkpoints
-data/models/
-
-# Virtual envs
-.venv/
-venv/
-env/
-
-# Logs
-*.log
-logs/
-route_optimizer.log
-
-# Screenshots / images
-screenshots/
-*.png
-*.jpg
-*.jpeg
-*.gif
-
-# Reports from inventory tool
+# Inventory reports
 PROJECT_INVENTORY.md
 project_filelist.csv
 project_candidates_delete.csv
 project_largefiles.csv
-=4.5.0
 
-# Chrome profiles
-src/parsers/chrome_profile/
-src/parsers/chrome_profile_loads/
-src/parsers/chrome_profile_transport/
-src/parsers/cars_data/
-src/parsers/car_region_progress.json
-src/parsers/cars_data/
+# Stray artifacts
+=4.5.0
