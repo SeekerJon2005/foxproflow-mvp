@@ -1,13 +1,13 @@
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+r"""
 Generate 'move_commands.sh' with recommended 'git mv' commands
 to reorganize the repo into FoxProFlow 2.0 canonical structure.
+
 Usage:
-    python tools/generate_move_suggestions.py "C:\Users\Evgeniy\projects\foxproflow-mvp 2.0"
+    python tools/generate_move_suggestions.py "C:/Users/Evgeniy/projects/foxproflow-mvp 2.0"
 """
-import sys, re
+import sys, re, fnmatch
 from pathlib import Path
 
 MAP = [
@@ -38,9 +38,59 @@ def main():
     if len(sys.argv) < 2:
         print("Usage: python tools/generate_move_suggestions.py <project_root>")
         sys.exit(1)
-    root = Path(sys.argv[1]).resolve()
-    paths = sorted([p for p in root.rglob('*') if p.is_file() and '.git' not in p.parts])
 
+    root = Path(sys.argv[1]).resolve()
+
+    # --- load .gitignore patterns ---
+    gitignore_patterns = []
+    gitignore_path = root / '.gitignore'
+    if gitignore_path.exists():
+        for line in gitignore_path.read_text(encoding='utf-8', errors='ignore').splitlines():
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            gitignore_patterns.append(line)
+
+    def is_ignored_by_gitignore(rel_path_posix: str) -> bool:
+        for pat in gitignore_patterns:
+            if pat.endswith('/'):
+                if rel_path_posix.startswith(pat):
+                    return True
+            else:
+                if fnmatch.fnmatch(rel_path_posix, pat):
+                    return True
+        return False
+
+    def should_skip(p: Path) -> bool:
+        # drop .git internals
+        if '.git' in p.parts:
+            return True
+        # drop top-level data/ (runtime/data artifacts). src/data_layer оставляем
+        try:
+            rel = p.relative_to(root)
+        except ValueError:
+            return True
+        if rel.parts and rel.parts[0] == 'data':
+            return True
+        # drop virtual envs
+        if any(part in p.parts for part in ('.venv', 'venv', 'env')):
+            return True
+        # .gitignore-driven
+        if is_ignored_by_gitignore(rel.as_posix()):
+            return True
+        return False
+
+    # --- collect files with filtering ---
+    paths = []
+    for p in root.rglob('*'):
+        if not p.is_file():
+            continue
+        if should_skip(p):
+            continue
+        paths.append(p)
+    paths.sort()
+
+    # --- script header ---
     cmds = []
     cmds.append('#!/usr/bin/env bash')
     cmds.append('set -e')
@@ -52,10 +102,7 @@ def main():
         target = None
         for rx, dest in MAP:
             if re.search(rx, rel):
-                if dest == 'DETECT':
-                    target = detect_main_target(p)
-                else:
-                    target = dest
+                target = detect_main_target(p) if dest == 'DETECT' else dest
                 break
         if not target:
             continue
@@ -65,9 +112,11 @@ def main():
         if target_p.exists():
             cmds.append(f'echo "# SKIP (exists): {rel} -> {target}"')
         else:
-            # ensure target dir
-            cmds.append(f'mkdir -p "{target_p.parent.as_posix()}"')
+            parent_rel = Path(target).parent.as_posix()
+            if parent_rel:
+                cmds.append(f'mkdir -p "{parent_rel}"')
             cmds.append(f'git mv "{rel}" "{target}"')
+
     (root / 'move_commands.sh').write_text("\n".join(cmds), encoding='utf-8')
     print("Wrote:", root / 'move_commands.sh')
     print('Next: review this script, then run it from the project root in Git Bash:')
