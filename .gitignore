@@ -120,3 +120,9 @@ project_largefiles.csv
 
 # Celery schedule DB
 celerybeat-schedule
+
+# Прогресс парсера (cars)
+src/parsers/car_region_progress.json
+
+# Chrome-профиль (loads)
+src/parsers/chrome_profile_loads/
