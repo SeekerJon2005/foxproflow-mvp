@@ -1,20 +1,20 @@
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from pydantic import BaseModel
 
 class FreightEnriched(BaseModel):
-    id: str
+    id: Optional[str] = None
     hash: Optional[str] = None
-    loading_city: str
-    unloading_city: str
-    distance: float
-    cargo: str
-    weight: float
-    volume: float
-    body_type: str
-    loading_date: str
-    revenue_rub: float
-    profit_per_km: float
+    loading_city: Optional[str] = None
+    unloading_city: Optional[str] = None
+    distance: Optional[float] = None
+    cargo: Optional[str] = None
+    weight: Optional[float] = None
+    volume: Optional[float] = None
+    body_type: Optional[str] = None
+    loading_date: Optional[datetime] = None
+    revenue_rub: Optional[float] = None
+    profit_per_km: Optional[float] = None
     loading_lat: Optional[float] = None
     loading_lon: Optional[float] = None
     unloading_lat: Optional[float] = None
@@ -22,10 +22,8 @@ class FreightEnriched(BaseModel):
     loading_region: Optional[str] = None
     unloading_region: Optional[str] = None
 
-    # ✅ поменяли str → datetime
     parsed_at: Optional[datetime] = None
-
-    session_id: Optional[str] = None
+    session_id: Optional[int] = None
     source: Optional[str] = None
 
     usd_rate: Optional[float] = None
@@ -37,7 +35,7 @@ class FreightEnriched(BaseModel):
     unloading_region_requests: Optional[int] = None
 
 class FreightListResponse(BaseModel):
-    items: list[FreightEnriched]
+    items: List[FreightEnriched]
     total: int
     limit: int
     offset: int

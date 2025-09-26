@@ -1,0 +1,18 @@
+# venv и кэш
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# ide
+.idea/
+.vscode/
+
+# локальные данные
+data/db/pgdata/
+data/raw/**
+src/parsers/*chrome_profile*/
+src/parsers/*trucks_profile*/
+
+# логи
+*.log

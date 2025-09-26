@@ -1,44 +1,46 @@
+# src/api/app/db.py
 import os
-from contextlib import contextmanager
-from psycopg2 import pool
-from psycopg2.extras import RealDictCursor
+import asyncpg
 from dotenv import load_dotenv
+from pathlib import Path
 
-load_dotenv()
+# Загружаем .env.local, если он есть (для локального запуска uvicorn на Windows)
+# иначе — .env (для Docker и общего окружения)
+if Path(".env.local").exists():
+    load_dotenv(dotenv_path=Path(".env.local"))
+else:
+    load_dotenv(dotenv_path=Path(".env"))
+
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is not set")
 
-# для psycopg2 убираем "+psycopg2" из URL SQLAlchemy-стиля
-if "+psycopg2" in DATABASE_URL:
-    DATABASE_URL = DATABASE_URL.replace("+psycopg2", "")
+# Глобальный пул подключений
+_pool: asyncpg.Pool | None = None
 
-_pg_pool = pool.SimpleConnectionPool(
-    minconn=1, maxconn=10, dsn=DATABASE_URL
-)
+async def get_pool() -> asyncpg.Pool:
+    """Создаёт и кэширует пул подключений asyncpg"""
+    global _pool
+    if _pool is None:
+        _pool = await asyncpg.create_pool(dsn=DATABASE_URL, min_size=1, max_size=10)
+    return _pool
 
-@contextmanager
-def get_conn():
-    conn = _pg_pool.getconn()
-    try:
-        yield conn
-    finally:
-        _pg_pool.putconn(conn)
+async def fetch_all(sql: str, params: tuple = ()):
+    """Выполнить SELECT и вернуть список dict"""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(sql, *params)
+        return [dict(r) for r in rows]
 
-def fetch_all(sql: str, params: tuple = ()):
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(sql, params)
-            return cur.fetchall()
+async def fetch_one(sql: str, params: tuple = ()):
+    """Выполнить SELECT и вернуть одну строку dict или None"""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(sql, *params)
+        return dict(row) if row else None
 
-def fetch_one(sql: str, params: tuple = ()):
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(sql, params)
-            return cur.fetchone()
-
-def execute(sql: str, params: tuple = ()):
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
-            conn.commit()
+async def execute(sql: str, params: tuple = ()):
+    """Выполнить запрос без возврата (INSERT/UPDATE/DELETE)"""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(sql, *params)

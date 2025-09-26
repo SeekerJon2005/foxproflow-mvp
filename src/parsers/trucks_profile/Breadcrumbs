@@ -1,0 +1,30 @@
+0:00:04 Tab1 StartNav9 #renderer-script #auto_subframe
+0:00:04 Tab1 FinishNav9
+0:00:04 Tab1 PageLoad
+0:00:04 Tab1 FinishNav8
+0:00:04 Tab1 PageLoad
+0:00:06 Tab1 StartNav10 #renderer-script #auto_subframe
+0:00:06 Tab1 FinishNav10
+0:00:06 Tab1 StartNav11 #renderer-script #auto_subframe
+0:00:06 Tab1 FinishNav11
+0:00:06 Tab1 PageLoad
+0:00:06 Tab1 PageLoad
+0:00:06 Tab1 PageLoad
+0:00:06 Tab1 StartNav12 #typed
+0:00:07 Media.Hidden
+0:00:07 Tab1 RemoveInfobar73
+0:00:07 Tab1 FinishNav12
+0:00:07 Tab1 AddInfobar73
+0:00:07 Tab1 StartNav13 #renderer-script #auto_subframe
+0:00:08 Tab1 StartNav14 #renderer-script #auto_subframe
+0:00:08 Tab1 FinishNav14
+0:00:08 Tab1 PageLoad
+0:00:08 Tab1 FinishNav13
+0:00:08 Tab1 PageLoad
+0:00:10 Tab1 StartNav15 #renderer-script #auto_subframe
+0:00:11 Tab1 StartNav16 #renderer-script #auto_subframe
+0:00:11 Tab1 FinishNav16
+0:00:11 Tab1 PageLoad
+0:00:11 Tab1 FinishNav15
+0:00:11 Tab1 PageLoad
+0:00:11 Tab1 PageLoad

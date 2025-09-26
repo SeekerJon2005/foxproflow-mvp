@@ -1,0 +1,14 @@
+2025/09/25-20:01:10.555 1348 Reusing MANIFEST C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\src\parsers\trucks_profile\Default\Local Storage\leveldb/MANIFEST-000001
+2025/09/25-20:01:10.559 1348 Recovering log #110
+2025/09/25-20:01:10.560 1348 Level-0 table #113: started
+2025/09/25-20:01:10.563 1348 Level-0 table #113: 68323 bytes OK
+2025/09/25-20:01:10.567 1348 Delete type=0 #110
+2025/09/25-20:01:10.567 4824 Compacting 4@0 + 1@1 files
+2025/09/25-20:01:10.573 4824 Generated table #115@0: 91 keys, 98406 bytes
+2025/09/25-20:01:10.573 4824 Compacted 4@0 + 1@1 files => 98406 bytes
+2025/09/25-20:01:10.573 4824 compacted to: files[ 0 1 1 0 0 0 0 ]
+2025/09/25-20:01:10.574 4824 Delete type=2 #104
+2025/09/25-20:01:10.574 4824 Delete type=2 #106
+2025/09/25-20:01:10.574 4824 Delete type=2 #109
+2025/09/25-20:01:10.574 4824 Delete type=2 #111
+2025/09/25-20:01:10.574 4824 Delete type=2 #113

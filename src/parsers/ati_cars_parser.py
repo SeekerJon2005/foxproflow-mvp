@@ -1,130 +1,96 @@
 # -*- coding: utf-8 -*-
 """
-ATI TRUCKS Parser (транспорт) — стабильная версия с раздельным профилем Chrome.
-Повторяет рабочую логику парсера грузов (ati_parser.py), но под разметку trucks.ati.su.
+ATI TRUCKS PARSER (trucks.ati.su) — видимые сессии + визуальный дебаг (подробные логи и подсветка элементов)
 
-Ключевые моменты:
-- Отдельный профиль Chrome: chrome_profile_transport
-- Точечная зачистка Chrome по пути профиля (не трогаем грузовой браузер)
-- Сохранение произвольного фильтра (любой маршрут/тип ТС) и парсинг по нему
-- Отдельные файлы прогресса: для фильтра и для авто‑обхода регионов
-- Redis‑дедупликация с безопасным фолбэком на сеансовый set
-- Жёсткий рестарт драйвера с восстановлением состояния до целевой страницы
-
-Селекторы и структура карточек/пагинации — из ваших примеров по trucks.ati.su.
+Переключатели в начале файла:
+- HEADFUL_SESSIONS: все сессии (2/3/4/6) запускаются с окном браузера
+- VISUAL_DEBUG: подсветка элементов + HUD в окне
+- TERMINAL_COLOR_LOGS: цвет в консоли (рекомендуется pip install colorama)
 """
 
 from __future__ import annotations
 
 import os
 import re
-import gc
 import sys
 import json
 import time
 import psutil
 import random
-import signal
-import hashlib
 import logging
-from typing import Any, Dict, List, Optional, Set, Tuple
-from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+from contextlib import suppress
 
-# Selenium
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.common.exceptions import (
-    TimeoutException,
-    NoSuchElementException,
-    StaleElementReferenceException,
-    WebDriverException,
-)
+# ====== НАСТРОЙКИ ======
+HEADFUL_SESSIONS: bool = True     # все сессии (в меню 2/3/4/6) — с окном браузера
+VISUAL_DEBUG: bool = True         # встраиваем HUD и подсветку элементов в браузер
+TERMINAL_COLOR_LOGS: bool = True  # цветные логи в терминал (если доступен colorama)
 
-# -----------------------------------------------------------------------------
-# ЛОГИРОВАНИЕ
-# -----------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-    handlers=[logging.StreamHandler()]
-)
+# Палитра для подсветки
+COLORS = {
+    "page_size":   "#42a5f5",
+    "nav_input":   "#fdd835",
+    "nav_next":    "#fb8c00",
+    "card":        "#d81b60",
+    "price":       "#66bb6a",
+    "company":     "#ab47bc",
+}
 
-# -----------------------------------------------------------------------------
-# REDIS MANAGER (с фолбэком)
-# -----------------------------------------------------------------------------
-class _RedisStub:
-    """Заглушка RedisManager — одинаковый интерфейс, никаких исключений наружу."""
-    def is_redis_available(self) -> bool:
-        return False
-    def is_duplicate(self, key: str, ttl: int = 24 * 3600) -> bool:
-        return False
-    def check_and_set(self, key: str, ttl: int = 24 * 3600) -> bool:
-        return True
-    def set_if_not_exists(self, key: str, ttl: int = 24 * 3600) -> bool:
-        return True
+# ====== selenium ======
+try:
+    from selenium import webdriver
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.common.keys import Keys
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.common.exceptions import (
+        TimeoutException,
+        NoSuchElementException,
+        StaleElementReferenceException,
+        WebDriverException,
+    )
+    ChromeOptionsType = webdriver.ChromeOptions  # type: ignore[attr-defined]
+except ImportError:
+    # Фолбэк: определим "пустые" типы, чтобы линтер не ругался на кортеж исключений
+    class _DummyExc(Exception): ...
+    TimeoutException = _DummyExc  # type: ignore
+    NoSuchElementException = _DummyExc  # type: ignore
+    StaleElementReferenceException = _DummyExc  # type: ignore
+    WebDriverException = _DummyExc  # type: ignore
+    webdriver = Any  # type: ignore
+    By = Keys = WebDriverWait = object  # type: ignore
+    ChromeOptionsType = Any  # type: ignore
 
-def _import_redis_manager() -> Any:
-    candidates = [
-        "src.data_layer.redis_manager",
-        "data_layer.redis_manager",
-        "redis_manager",
-    ]
-    for mod in candidates:
-        try:
-            module = __import__(mod, fromlist=["redis_manager"])
-            rm = getattr(module, "redis_manager", None)
-            if rm and getattr(rm, "is_redis_available", None):
-                if rm.is_redis_available():
-                    logging.info("✅ RedisManager успешно импортирован и подключен")
-                else:
-                    logging.warning("RedisManager импортирован, но Redis недоступен")
-                return rm
-        except Exception as e:
-            continue
-    logging.warning("❌ RedisManager не доступен, используется заглушка")
-    return _RedisStub()
+# Единый набор исключений Selenium (всегда tuple[BaseException,...])
+SEL_EXC = (TimeoutException, NoSuchElementException, StaleElementReferenceException, WebDriverException)
 
-redis_manager = _import_redis_manager()
-REDIS_ON = bool(getattr(redis_manager, "is_redis_available", lambda: False)())
+# ====== ПУТИ/КАТАЛОГИ ======
 
-# -----------------------------------------------------------------------------
-# КОНСТАНТЫ/ПУТИ/ПРОФИЛЬ
-# -----------------------------------------------------------------------------
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PARSERS_DIR = Path(__file__).resolve().parent
+SRC_DIR     = PARSERS_DIR.parent
+REPO_ROOT   = SRC_DIR.parent
 
-# ВАЖНО: у транспорта — свой профиль. Не совпадает с грузовым!
-PROFILE_PATH = os.path.join(SCRIPT_DIR, "chrome_profile_transport")
+BASE_URL        = "https://ati.su"
+LISTING_URL     = "https://trucks.ati.su/?sort=createdAtDesc"
 
-COOKIES_FILE = os.path.join(SCRIPT_DIR, "ati_cookies.json")  # общая авторизация пойдёт обоим парсерам
-FILTERS_DIR = os.path.join(SCRIPT_DIR, "car_region_filters")  # фильтры для авто‑обхода регионов
-DATA_DIR = os.path.join(SCRIPT_DIR, "cars_data")
-os.makedirs(FILTERS_DIR, exist_ok=True)
-os.makedirs(DATA_DIR, exist_ok=True)
+REGION_FILTERS_DIR = REPO_ROOT / "data" / "config" / "filters" / "trucks_region_filters"
+REGIONS_DATA_DIR   = PARSERS_DIR / "regions_data_trucks"
+REGION_PROGRESS    = PARSERS_DIR / "region_progress_trucks.json"
 
-# прогрессы разделены:
-PROGRESS_FILTER_FILE = os.path.join(SCRIPT_DIR, "car_saved_filter_progress.json")   # пункт 3
-PROGRESS_REGIONS_FILE = os.path.join(SCRIPT_DIR, "car_region_progress.json")        # пункт 4
+FILTERS_DIR        = PARSERS_DIR / "car_saved_filters"
+FILTER_PROGRESS    = PARSERS_DIR / "car_filter_progress.json"
+COOKIES_FILE       = PARSERS_DIR / "ati_cookies.json"
+CHROME_PROFILE     = PARSERS_DIR / "trucks_profile"
+STOP_FILE          = PARSERS_DIR / "stop.txt"
 
-# базовые адреса для транспорта
-TRUCKS_BASE = "https://trucks.ati.su/?utm_source=header&utm_campaign=new_header"  # стартовая страница фильтра
-EXPECTED_USERNAME = "Ангелевская Оксана"  # для check_login()
+for d in (REGION_FILTERS_DIR, REGIONS_DATA_DIR, FILTERS_DIR, CHROME_PROFILE):
+    d.mkdir(parents=True, exist_ok=True)
 
-# лимиты
-JS_HEAP_LIMIT_MB = 48 * 1024
-CRITICAL_TIMEOUT = 10  # секунды
-DRIVER_RESTART_EVERY_N_PAGES = 10  # как у грузов — жёсткий рестарт раз в N страниц
+WAIT_SHORT = 6
+WAIT_LONG  = 18
+HARD_RESTART_EVERY = 6
+PAUSE_BETWEEN_REGIONS = (4, 6)
 
-# сеансовые штуки
-SESSION_SEEN_HASHES: Set[str] = set()
-current_driver: Optional[webdriver.Chrome] = None
-stop_requested: bool = False
-
-
-# -----------------------------------------------------------------------------
-# СПРАВОЧНИК РЕГИОНОВ
-# -----------------------------------------------------------------------------
 RUSSIAN_REGIONS = [
     "Республика Адыгея", "Республика Алтай", "Республика Башкортостан", "Республика Бурятия",
     "Республика Дагестан", "Республика Ингушетия", "Кабардино-Балкарская Республика",
@@ -149,797 +115,940 @@ RUSSIAN_REGIONS = [
     "Ханты-Мансийский автономный округ — Югра", "Чукотский автономный округ",
     "Ямало-Ненецкий автономный округ"
 ]
+ALL_REGIONS_164 = RUSSIAN_REGIONS + [f"Московская область - {r}" for r in RUSSIAN_REGIONS]
 
-MOSCOW_OBLAST_COMBINATIONS = [
-    "Московская область - Республика Адыгея", "Московская область - Республика Алтай",
-    "Московская область - Республика Башкортостан", "Московская область - Республика Бурятия",
-    "Московская область - Республика Дагестан", "Московская область - Республика Ингушетия",
-    "Московская область - Кабардино-Балкарская Республика", "Московская область - Республика Калмыкия",
-    "Московская область - Карачаево-Черкесская Республика", "Московская область - Республика Карелия",
-    "Московская область - Республика Коми", "Московская область - Республика Крым",
-    "Московская область - Республика Марий Эл", "Московская область - Республика Мордовия",
-    "Московская область - Республика Саха (Якутия)", "Московская область - Республика Северная Осетия-Алания",
-    "Московская область - Республика Татарстан", "Московская область - Республика Тыва",
-    "Московская область - Удмуртская Республика", "Московская область - Республика Хакасия",
-    "Московская область - Чеченская Республика", "Московская область - Чувашская Республика",
-    "Московская область - Алтайский край", "Московская область - Забайкальский край",
-    "Московская область - Камчатский край", "Московская область - Краснодарский край",
-    "Московская область - Красноярский край", "Московская область - Пермский край",
-    "Московская область - Приморский край", "Московская область - Ставропольский край",
-    "Московская область - Хабаровский край", "Московская область - Амурская область",
-    "Московская область - Архангельская область", "Московская область - Астраханская область",
-    "Московская область - Белгородская область", "Московская область - Брянская область",
-    "Московская область - Владимирская область", "Московская область - Волгоградская область",
-    "Московская область - Вологодская область", "Московская область - Воронежская область",
-    "Московская область - Ивановская область", "Московская область - Иркутская область",
-    "Московская область - Калининградская область", "Московская область - Калужская область",
-    "Московская область - Кемеровская область", "Московская область - Кировская область",
-    "Московская область - Костромская область", "Московская область - Курганская область",
-    "Московская область - Курская область", "Московская область - Ленинградская область",
-    "Московская область - Липецкая область", "Московская область - Магаданская область",
-    "Московская область - Мурманская область", "Московская область - Нижегородская область",
-    "Московская область - Новгородская область", "Московская область - Новосибирская область",
-    "Московская область - Омская область", "Московская область - Оренбургская область",
-    "Московская область - Орловская область", "Московская область - Пензенская область",
-    "Московская область - Псковская область", "Московская область - Ростовская область",
-    "Московская область - Рязанская область", "Московская область - Самарская область",
-    "Московская область - Саратовская область", "Московская область - Сахалинская область",
-    "Московская область - Свердловская область", "Московская область - Смоленская область",
-    "Московская область - Тамбовская область", "Московская область - Тверская область",
-    "Московская область - Томская область", "Московская область - Тульская область",
-    "Московская область - Тюменская область", "Московская область - Ульяновская область",
-    "Московская область - Челябинская область", "Московская область - Ярославская область",
-    "Московская область - Санкт-Петербург", "Московская область - Еврейская автономная область",
-    "Московская область - Ненецкий автономный округ",
-    "Московская область - Ханты-Мансийский автономный округ — Югра",
-    "Московская область - Чукотский автономный округ",
-    "Московская область - Ямало-Ненецкий автономный округ"
-]
+# ====== ЛОГИРОВАНИЕ ======
 
-# -----------------------------------------------------------------------------
-# СИГНАЛЫ/СТОП
-# -----------------------------------------------------------------------------
-def _signal_handler(_sig: int, _frame: Any) -> None:
-    global stop_requested, current_driver
-    stop_requested = True
-    logging.info("Получен сигнал остановки. Закрываем драйвер...")
-    try:
-        if current_driver:
-            current_driver.quit()
-    finally:
-        os._exit(0)
+class _ColorFormatter(logging.Formatter):
+    COLORS = {
+        logging.DEBUG:    "\033[36m",  # cyan
+        logging.INFO:     "\033[37m",  # white/gray
+        logging.WARNING:  "\033[33m",  # yellow
+        logging.ERROR:    "\033[31m",  # red
+        logging.CRITICAL: "\033[41m",  # red bg
+    }
+    RESET = "\033[0m"
+    def format(self, record: logging.LogRecord) -> str:
+        msg = super().format(record)
+        color = self.COLORS.get(record.levelno, self.RESET)
+        return f"{color}{msg}{self.RESET}"
 
-signal.signal(signal.SIGINT, _signal_handler)
+def _setup_logging() -> None:
+    level = logging.DEBUG
+    fmt = "%(asctime)s - %(levelname)s - %(message)s"
+    datefmt = "%Y-%m-%d %H:%M:%S"
 
-# -----------------------------------------------------------------------------
-# УТИЛИТЫ
-# -----------------------------------------------------------------------------
-def _sleep(a: float = 0.05, b: float = 0.18) -> None:
-    time.sleep(random.uniform(a, b))
+    file_handler = logging.FileHandler(str(PARSERS_DIR / "ati_cars_parser.log"), encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter(fmt, datefmt))
 
-def _hash_dict(d: Dict[str, Any]) -> str:
-    try:
-        js = json.dumps(d, ensure_ascii=False, sort_keys=True)
-        return hashlib.sha256(js.encode("utf-8")).hexdigest()
-    except Exception:
-        return hashlib.sha256(str(d).encode("utf-8")).hexdigest()
-
-def _is_dup(h: str, ttl: int = 7 * 24 * 3600) -> bool:
-    """Безопасный dedup: Redis → фолбэк на сеанс."""
-    if h in SESSION_SEEN_HASHES:
-        return True
-    try:
-        # основная сигнатура
-        if hasattr(redis_manager, "is_duplicate"):
-            try:
-                if redis_manager.is_duplicate(h, ttl):
-                    return True
-            except TypeError:
-                if redis_manager.is_duplicate(h):
-                    return True
-        elif hasattr(redis_manager, "check_and_set"):
-            created = bool(redis_manager.check_and_set(h, ttl))
-            if not created:
-                return True
-        elif hasattr(redis_manager, "set_if_not_exists"):
-            created = bool(redis_manager.set_if_not_exists(h, ttl))
-            if not created:
-                return True
-    except Exception:
-        pass
-    SESSION_SEEN_HASHES.add(h)
-    return False
-
-# -----------------------------------------------------------------------------
-# CHROME: запуск и точечная зачистка по профилю
-# -----------------------------------------------------------------------------
-def _kill_chrome_by_profile(profile_path: str, timeout: float = 4.0) -> None:
-    victims: List[psutil.Process] = []
-    for p in psutil.process_iter(["pid", "name", "cmdline"]):
+    console_handler = logging.StreamHandler()
+    if TERMINAL_COLOR_LOGS:
         try:
-            name = (p.info.get("name") or "").lower()
-            cmd = " ".join(p.info.get("cmdline") or [])
-            if ("chrome" in name or "chromium" in name) and profile_path in cmd:
-                victims.append(p)
-                victims.extend(p.children(recursive=True))
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
-
-    for proc in victims:
-        try:
-            proc.terminate()
+            from colorama import just_fix_windows_console  # type: ignore
+            just_fix_windows_console()
+            console_handler.setFormatter(_ColorFormatter(fmt, datefmt))
         except Exception:
-            pass
-    _, alive = psutil.wait_procs(victims, timeout=timeout)
-    for proc in alive:
+            console_handler.setFormatter(logging.Formatter(fmt, datefmt))
+    else:
+        console_handler.setFormatter(logging.Formatter(fmt, datefmt))
+
+    logging.basicConfig(level=level, handlers=[console_handler, file_handler])
+
+_setup_logging()
+
+def banner_once() -> None:
+    print("==================================================")
+    print("ПАРСЕР ATI.SU - ГИБРИДНАЯ СТАБИЛЬНАЯ ВЕРСИЯ (видимые сессии + подсветка)")
+    print("==================================================")
+
+# ====== Redis фасад ======
+
+class _DedupFacade:
+    def __init__(self) -> None:
+        self._seen: set[str] = set()
+        self.rm = None
+        candidates = [
+            ("data_layer.redis_manager", "redis_manager"),
+            ("redis_manager", "redis_manager"),
+        ]
+        for mod, attr in candidates:
+            try:
+                sys.path.append(str(REPO_ROOT / "src"))
+                m = __import__(mod, fromlist=[attr])
+                self.rm = getattr(m, attr)
+                break
+            except (ImportError, AttributeError):
+                self.rm = None
+        if self.is_redis_available():
+            logging.info("✅ Успешное подключение к Redis")
+            logging.info("✅ Redis подключен (RedisManager)")
+        else:
+            logging.warning("❌ Redis недоступен — будет фолбэк")
+
+    def is_redis_available(self) -> bool:
         try:
-            proc.kill()
+            return bool(self.rm and getattr(self.rm, "is_redis_available", lambda: False)())
         except Exception:
-            pass
-    psutil.wait_procs(alive, timeout=timeout)
+            return False
 
-    # снять lock-файлы профиля (чтобы следующий запуск прошёл без конфликтов)
-    for fn in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
-        fp = os.path.join(profile_path, fn)
-        if os.path.exists(fp):
-            try:
-                os.remove(fp)
-            except Exception:
-                pass
-
-def init_driver(headless: bool = False) -> webdriver.Chrome:
-    global current_driver
-    os.makedirs(PROFILE_PATH, exist_ok=True)
-
-    opts = Options()
-    opts.add_argument(f"--user-data-dir={PROFILE_PATH}")
-    opts.add_argument("--profile-directory=Default")
-    opts.add_argument("--disable-gpu")
-    opts.add_argument("--no-sandbox")
-    opts.add_argument("--disable-dev-shm-usage")
-    opts.add_argument("--disable-notifications")
-    opts.add_argument("--lang=ru-RU")
-    opts.add_argument("--disable-blink-features=AutomationControlled")
-    opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-    opts.add_argument("--blink-settings=imagesEnabled=false")
-    opts.add_argument("--disable-features=Translate,BackForwardCache")
-    opts.add_argument(f"--js-flags=--max_old_space_size={JS_HEAP_LIMIT_MB}")
-    if headless:
-        opts.add_argument("--headless=new")
-
-    logging.info(f"[Chrome] запуск на профиле: {PROFILE_PATH}")
-    driver = webdriver.Chrome(service=Service(), options=opts)
-    driver.set_page_load_timeout(CRITICAL_TIMEOUT)
-    driver.set_script_timeout(CRITICAL_TIMEOUT)
-    driver.implicitly_wait(2)
-    current_driver = driver
-    return driver
-
-def restart_driver(last_url: Optional[str] = None) -> webdriver.Chrome:
-    global current_driver
-    try:
-        if current_driver:
-            try:
-                current_driver.quit()
-            except Exception:
-                pass
-    finally:
-        _kill_chrome_by_profile(PROFILE_PATH)
-
-    for attempt in range(1, 4):
-        try:
-            logging.info(f"Перезапуск драйвера (попытка {attempt}/3)…")
-            drv = init_driver()
-            if last_url:
-                try:
-                    drv.get(last_url)
-                except Exception:
-                    pass
-            current_driver = drv
-            return drv
-        except Exception as e:
-            _sleep(0.5, 1.2)
-    raise RuntimeError("Не удалось перезапустить драйвер")
-
-# -----------------------------------------------------------------------------
-# COOKIE/AUTH
-# -----------------------------------------------------------------------------
-def _load_cookies(driver: webdriver.Chrome) -> None:
-    if not os.path.exists(COOKIES_FILE):
-        return
-    try:
-        with open(COOKIES_FILE, "r", encoding="utf-8") as f:
-            cookies = json.load(f)
-        driver.get("https://ati.su/")
-        for c in cookies:
-            try:
-                driver.add_cookie(c)
-            except Exception:
-                pass
-        logging.info("Загружено %d cookies ATI", len(cookies))
-    except Exception as e:
-        logging.error("Ошибка загрузки cookies: %s", e)
-
-def _save_cookies(driver: webdriver.Chrome) -> None:
-    try:
-        cookies = driver.get_cookies()
-        with open(COOKIES_FILE, "w", encoding="utf-8") as f:
-            json.dump(cookies, f, ensure_ascii=False, indent=2)
-        logging.info("Cookies ATI сохранены (%d шт.)", len(cookies))
-    except Exception as e:
-        logging.error("Ошибка сохранения cookies ATI: %s", e)
-
-def check_login(driver: webdriver.Chrome) -> bool:
-    """Простая проверка авторизации: ищем имя пользователя на ati.su."""
-    try:
-        driver.get("https://ati.su/")
-        _sleep(0.2, 0.4)
-        page = driver.page_source
-        return EXPECTED_USERNAME in page
-    except Exception:
+    def is_duplicate(self, key: str, ttl: int = 14 * 24 * 3600) -> bool:
+        if not key:
+            return False
+        if self.is_redis_available():
+            with suppress(Exception):
+                fn = getattr(self.rm, "is_duplicate", None)
+                if fn and callable(fn):
+                    return bool(fn(key, ttl))
+        if key in self._seen:
+            return True
+        self._seen.add(key)
         return False
 
-def ensure_session(driver: webdriver.Chrome) -> None:
-    """Подливаем куки и убеждаемся, что мы залогинены под ожидаемым пользователем."""
-    if not check_login(driver):
-        _load_cookies(driver)
-    # повторная проверка
-    if not check_login(driver):
-        logging.info("=== РУЧНАЯ АВТОРИЗАЦИЯ ATI ===\n\n"
-                     "1) В открывшемся браузере войдите в аккаунт ATI\n"
-                     f"2) Убедитесь, что справа вверху указано: {EXPECTED_USERNAME}\n"
-                     "3) Вернитесь в консоль и нажмите Enter\n")
-        input("Нажмите Enter после авторизации >>> ")
-        if not check_login(driver):
-            raise RuntimeError("Авторизация не подтверждена")
-        _save_cookies(driver)
-    else:
-        logging.info("Авторизация ATI подтверждена: %s", EXPECTED_USERNAME)
+DEDUP = _DedupFacade()
 
-# -----------------------------------------------------------------------------
-# ПРОЧЕЕ I/O (прогрессы/фильтры)
-# -----------------------------------------------------------------------------
-def _load_json(path: str, default: Any) -> Any:
+# ====== УТИЛИТЫ ======
+
+def slugify(s: str) -> str:
+    s = s.strip().lower()
+    s = re.sub(r"[^\w\-\s]+", "", s, flags=re.I | re.U)
+    s = re.sub(r"\s+", "_", s)
+    return s[:120] or "noname"
+
+def read_json(path: Path, default: Any) -> Any:
     try:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
         pass
     return default
 
-def _save_json(path: str, data: Any) -> None:
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
-
-# -----------------------------------------------------------------------------
-# ПАГИНАЦИЯ trucks.ati.su
-# -----------------------------------------------------------------------------
-def get_current_and_total_pages(driver: webdriver.Chrome) -> Tuple[int, int]:
-    """
-    Читаем верхнюю пагинацию (data-qa="top-pagination"):
-      - текущее значение в <input value="…">
-      - всего страниц в <button class="total-index_…">N</button>
-    """
+def write_json(path: Path, data: Any) -> None:
     try:
-        # контейнер пагинации
-        container = driver.find_element(By.CSS_SELECTOR, '[data-qa="top-pagination"]')
-        # input
-        inp = container.find_element(By.CSS_SELECTOR, '[data-qa="input-field"] input')
-        current = int(inp.get_attribute("value") or "1")
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError as e:
+        logging.error("Не удалось сохранить JSON '%s': %s", path, e)
 
-        # total
-        total_btn = container.find_element(By.CSS_SELECTOR, 'button[class*="total-index_"]')
-        total = int(total_btn.text.strip())
-        return current, total
-    except Exception:
-        return 1, 1
-
-def click_next_page(driver: webdriver.Chrome) -> bool:
-    """
-    Нажимаем «вперёд». Возвращаем True, если страница переключилась,
-    False — если кнопка «дальше» неактивна/мы на последней странице.
-    """
-    try:
-        container = driver.find_element(By.CSS_SELECTOR, '[data-qa="top-pagination"]')
-        next_btn = container.find_element(By.CSS_SELECTOR, 'button[class*="next_"]')
-        cls = next_btn.get_attribute("class") or ""
-        # иногда на последней странице кнопка есть, но disabled/не кликается
-        if "disabled" in cls or "hide" in cls.lower():
-            return False
-        next_btn.click()
-        _sleep(0.15, 0.35)
-        return True
-    except NoSuchElementException:
-        return False
-    except WebDriverException:
-        return False
-
-def go_to_page(driver: webdriver.Chrome, target_page: int) -> None:
-    """Перелистываем вперёд до нужной страницы (для восстановления после рестарта)."""
-    cur, total = get_current_and_total_pages(driver)
-    if target_page <= cur:
-        return
-    for _ in range(cur, min(total, target_page)):
-        if not click_next_page(driver):
-            break
-
-# -----------------------------------------------------------------------------
-# ПАРСИНГ КАРТОЧКИ
-# -----------------------------------------------------------------------------
-def _text_safe(el) -> str:
-    try:
-        return el.text.strip()
-    except Exception:
-        return ""
-
-def parse_card(card) -> Dict[str, Any]:
-    """
-    Парсим карточку транспорта (разметка по вашим примерам data-qa=...).
-    """
-    data: Dict[str, Any] = {
-        "source": "trucks.ati.su",
-        "scraped_at": datetime.utcnow().isoformat(),
-    }
-
-    try:
-        # id карточки
-        qa = card.get_attribute("data-qa") or ""
-        # обычно выглядит как truck-card-<uuid>
-        data["id"] = qa.replace("truck-card-", "") if "truck-card-" in qa else qa
-
-        # блок "transport"
-        try:
-            transport = card.find_element(By.CSS_SELECTOR, '[data-qa="transport"]')
-            info = transport.find_element(By.CSS_SELECTOR, '[data-qa="truck-info"]')
-            data["truck_info"] = _text_safe(info)
-
-            # вес/объём/габариты
-            try:
-                data["weight"] = _text_safe(transport.find_element(By.CSS_SELECTOR, '[data-qa="truck-weight"]'))
-            except Exception:
-                data["weight"] = ""
-            try:
-                data["volume"] = _text_safe(transport.find_element(By.CSS_SELECTOR, '[data-qa="truck-volume"]'))
-            except Exception:
-                data["volume"] = ""
-            try:
-                data["dimensions"] = _text_safe(transport.find_element(By.CSS_SELECTOR, '[data-qa="truck-dimensions"]'))
-            except Exception:
-                data["dimensions"] = ""
-
-            try:
-                data["loading_params"] = _text_safe(transport.find_element(By.CSS_SELECTOR, '[data-qa="truck-loading-params"]'))
-            except Exception:
-                data["loading_params"] = ""
-        except Exception:
-            pass
-
-        # блок погрузки
-        try:
-            load_td = card.find_element(By.CSS_SELECTOR, '[data-qa="loading-point"]')
-            data["loading_city"] = _text_safe(load_td.find_element(By.CSS_SELECTOR, '[data-qa="loading-city"]'))
-            try:
-                data["loading_distance"] = _text_safe(load_td.find_element(By.CSS_SELECTOR, '[data-qa="loading-car-location"]'))
-            except Exception:
-                data["loading_distance"] = ""
-            try:
-                data["loading_periodicity"] = _text_safe(load_td.find_element(By.CSS_SELECTOR, '[data-qa="loading-periodicity"]'))
-            except Exception:
-                data["loading_periodicity"] = ""
-        except Exception:
-            pass
-
-        # блок разгрузки
-        try:
-            unloads = card.find_element(By.CSS_SELECTOR, '[data-qa="unloadings"]')
-            data["main_unloading"] = _text_safe(unloads.find_element(By.CSS_SELECTOR, '[data-qa="main-unloading-point-name"]'))
-
-            # дополнительные варианты / с тарифами
-            variants = []
-            for el in unloads.find_elements(By.CSS_SELECTOR, '[data-qa^="unloading-point-"]'):
-                txt = _text_safe(el)
-                if txt:
-                    variants.append(txt)
-            data["unloading_variants"] = variants
-        except Exception:
-            data["main_unloading"] = ""
-            data["unloading_variants"] = []
-
-        # тарифы
-        prices = {"cash": "", "wout_nds": "", "with_nds": "", "bargain": False}
-        try:
-            rate_div = card.find_element(By.CSS_SELECTOR, '[data-qa="rate"]')
-            raw = _text_safe(rate_div)
-            # простая эвристика:
-            m_cash = re.search(r"(\d[\d\s ]*\d)\s*руб.*налич", raw, flags=re.I)
-            m_wo = re.search(r"(\d[\d\s ]*\d)\s*руб.*без\s*НДС", raw, flags=re.I)
-            m_w = re.search(r"(\d[\d\s ]*\d)\s*руб.*с\s*НДС", raw, flags=re.I)
-            prices["cash"] = (m_cash.group(1) if m_cash else "").replace(" ", " ").replace(" ", "")
-            prices["wout_nds"] = (m_wo.group(1) if m_wo else "").replace(" ", " ").replace(" ", "")
-            prices["with_nds"] = (m_w.group(1) if m_w else "").replace(" ", " ").replace(" ", "")
-            prices["bargain"] = ("торг" in raw.lower())
-        except Exception:
-            pass
-        data["prices"] = prices
-
-    except Exception as e:
-        data["parse_error"] = str(e)
-
-    data["hash"] = _hash_dict({
-        "truck_info": data.get("truck_info"),
-        "loading_city": data.get("loading_city"),
-        "main_unloading": data.get("main_unloading"),
-        "loading_periodicity": data.get("loading_periodicity"),
-        "prices": data.get("prices"),
-        "dimensions": data.get("dimensions"),
-    })
-    return data
-
-# -----------------------------------------------------------------------------
-# ПАРСИНГ СТРАНИЦЫ
-# -----------------------------------------------------------------------------
-def parse_page(driver: webdriver.Chrome) -> Tuple[int, int]:
-    """
-    Возвращаем: (сохранено, дубликатов)
-    """
-    saved = 0
-    dups = 0
-    cards = driver.find_elements(By.CSS_SELECTOR, '[data-qa^="truck-card-"]')
-    for c in cards:
-        item = parse_card(c)
-        h = item.get("hash") or _hash_dict(item)
-        if _is_dup(h):
-            dups += 1
-            continue
-        # пишем JSONL (режим без БД)
-        out = os.path.join(DATA_DIR, "cars.jsonl")
-        with open(out, "a", encoding="utf-8") as f:
-            f.write(json.dumps(item, ensure_ascii=False) + "\n")
-        saved += 1
+def append_jsonl(path: Path, rows: List[Dict[str, Any]]) -> Tuple[int, int]:
+    saved, dups = 0, 0
+    if not rows:
+        return saved, dups
+    with path.open("a", encoding="utf-8") as f:
+        for r in rows:
+            key = r.get("_dedup_key") or r.get("id") or r.get("href") or ""
+            if key and DEDUP.is_duplicate(str(key)):
+                dups += 1
+                continue
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+            saved += 1
     return saved, dups
 
-# -----------------------------------------------------------------------------
-# ОБЩИЕ ПОМОЩНИКИ
-# -----------------------------------------------------------------------------
-def soft_cleanup(driver: webdriver.Chrome) -> None:
+def memory_usage_mib() -> float:
     try:
-        logging.info("Мягкая очистка памяти")
-        gc.collect()
-        try:
-            driver.execute_script("window.gc && window.gc()")
-        except Exception:
-            pass
-        logging.info("Мягкая очистка памяти выполнена")
+        process = psutil.Process(os.getpid())
+        return process.memory_info().rss / (1024 * 1024)
     except Exception:
+        return 0.0
+
+# ====== ВИЗУАЛЬНЫЙ ДЕБАГ (HUD + подсветка) ======
+
+INJECT_DEBUG_JS = r"""
+if(!window.__foxDbg){(function(){
+  try{
+    const styleId='foxdbg-style'; 
+    if(!document.getElementById(styleId)){
+      const style=document.createElement('style'); style.id=styleId;
+      style.textContent = `
+        .foxdbg-outline{outline: 3px solid var(--foxdbg-color, #00e676) !important; outline-offset: 2px !important; position: relative !important;}
+        .foxdbg-tag{position: absolute; top: -12px; left: -2px; font: 12px/1.2 sans-serif; padding:2px 4px; background: rgba(0,0,0,0.85); color:#fff; border-radius: 4px; z-index: 2147483647;}
+        #foxdbg-hud{position: fixed; top: 8px; left: 8px; padding: 8px 10px; background: rgba(0,0,0,0.7); color: #fff; font: 12px sans-serif; border-radius: 6px; z-index: 2147483647; pointer-events:none; white-space: pre-line;}
+      `;
+      document.head.appendChild(style);
+    }
+    let hud=document.getElementById('foxdbg-hud');
+    if(!hud){ hud=document.createElement('div'); hud.id='foxdbg-hud'; document.body.appendChild(hud); }
+    window.__foxDbg = {
+      hud: function(msg){ try{ hud.textContent = msg; }catch(e){} },
+      mark: function(el, color, label, ttl){
+        try{
+          if(!el) return;
+          el.scrollIntoView({behavior:'instant', block:'center', inline:'center'});
+          el.style.setProperty('--foxdbg-color', color || '#00e676');
+          el.classList.add('foxdbg-outline');
+          if(label){
+            const tag=document.createElement('span'); tag.className='foxdbg-tag'; tag.textContent=label;
+            el.appendChild(tag);
+            setTimeout(()=>{ try{ tag.remove(); }catch(e){} }, ttl||1200);
+          }
+          setTimeout(()=>{ try{ el.classList.remove('foxdbg-outline'); el.style.removeProperty('--foxdbg-color'); }catch(e){} }, ttl||1200);
+        }catch(e){}
+      }
+    };
+  }catch(e){}
+})();}
+"""
+
+def ensure_debug_ui(driver) -> None:
+    if not VISUAL_DEBUG:
+        return
+    try:
+        ok = driver.execute_script("return !!window.__foxDbg")
+        if not ok:
+            driver.execute_script(INJECT_DEBUG_JS)
+    except SEL_EXC:
         pass
 
-def recover_and_apply_url(target_page: int, url: str) -> webdriver.Chrome:
-    """Жёсткий рестарт и восстановление на нужной странице."""
-    drv = restart_driver()
-    ensure_session(drv)
-    drv.get(url)
-    _sleep(0.25, 0.5)
-    go_to_page(drv, target_page)
+def dbg_hud(driver, msg: str) -> None:
+    if not VISUAL_DEBUG:
+        return
+    with suppress(SEL_EXC):
+        driver.execute_script("if(window.__foxDbg){__foxDbg.hud(arguments[0]);}", msg)
+
+def dbg_mark(driver, element, color: str, label: str, ttl_ms: int = 1200) -> None:
+    if not VISUAL_DEBUG:
+        return
+    with suppress(SEL_EXC):
+        driver.execute_script("if(window.__foxDbg){__foxDbg.mark(arguments[0], arguments[1], arguments[2], arguments[3]);}", element, color, label, ttl_ms)
+
+# ====== DRIVER / COOKIES ======
+
+def _chrome_options(headless: Optional[bool]) -> ChromeOptionsType:  # type: ignore[name-defined]
+    if headless is None:
+        headless = not HEADFUL_SESSIONS
+    opts = webdriver.ChromeOptions()
+    opts.add_argument(f"--user-data-dir={str(CHROME_PROFILE)}")
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--window-size=1440,1000")
+    opts.add_argument("--remote-allow-origins=*")
+    prefs = {
+        "profile.default_content_setting_values.notifications": 2,
+        "credentials_enable_service": False,
+        "profile.password_manager_enabled": False,
+    }
+    with suppress(Exception):
+        opts.add_experimental_option("prefs", prefs)
+    if headless:
+        opts.add_argument("--headless=new")
+    return opts
+
+def _new_driver(headless: Optional[bool] = None):
+    opts = _chrome_options(headless=headless)
+    driver = webdriver.Chrome(options=opts)  # type: ignore[call-arg]
+    driver.set_page_load_timeout(30)
+    driver.set_script_timeout(30)
+    driver.implicitly_wait(2)
+    with suppress(Exception):
+        driver.maximize_window()
+    return driver
+
+def save_cookies(driver) -> bool:
+    try:
+        cookies = driver.get_cookies()
+        COOKIES_FILE.write_text(json.dumps(cookies, ensure_ascii=False, indent=2), encoding="utf-8")
+        logging.info("Cookies ATI сохранены (%s шт.)", len(cookies))
+        return True
+    except (WebDriverException, OSError) as e:
+        logging.error("Ошибка сохранения cookies ATI: %s", e)
+        return False
+
+def load_cookies(driver) -> bool:
+    if not COOKIES_FILE.exists():
+        return False
+    try:
+        cookies = json.loads(COOKIES_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+
+    try:
+        driver.get(BASE_URL)
+        time.sleep(0.5)
+        for c in cookies:
+            c = dict(c)
+            dom = c.get("domain") or ".ati.su"
+            if "ati.su" not in dom:
+                dom = ".ati.su"
+            c["domain"] = dom
+            c.pop("expiry", None)
+            try:
+                driver.add_cookie(c)
+            except WebDriverException:
+                c.pop("sameSite", None)
+                c.pop("httpOnly", None)
+                c.pop("secure", None)
+                with suppress(WebDriverException):
+                    driver.add_cookie(c)
+        driver.get(LISTING_URL)
+        return True
+    except WebDriverException as e:
+        logging.warning("Не удалось загрузить cookies ATI: %s", e)
+        return False
+
+def is_logged_in(driver) -> Tuple[bool, str]:
+    try:
+        WebDriverWait(driver, WAIT_SHORT).until(lambda _drv: _drv.execute_script("return document.readyState") == "complete")
+        cand = driver.find_elements(By.CSS_SELECTOR, '[data-qa*="user"], [class*="user"], [data-qa*="profile"], [class*="profile"]')
+        if cand:
+            return True, "OK"
+        logout = driver.find_elements(By.XPATH, "//a[contains(translate(.,'ВЫЙТИ','выЙти'),'выйти')]")
+        if logout:
+            return True, "OK"
+        return False, ""
+    except SEL_EXC:
+        return False, ""
+
+# ====== НАВИГАЦИЯ/ПАГИНАЦИЯ ======
+
+def ensure_100_rows(driver) -> None:
+    ensure_debug_ui(driver)
+    try:
+        dbg_hud(driver, "Выставляем отображение: 100")
+        driver.execute_script("""
+            try {
+                const dd = document.querySelector('[data-qa="page-size"] select');
+                if (dd && dd.value !== '100') {
+                    dd.value='100';
+                    dd.dispatchEvent(new Event('change', {bubbles:true}));
+                    window._rows_set = true;
+                } else if (dd && dd.value === '100') {
+                    window._rows_set = true;
+                }
+            } catch(e) {}
+        """)
+        time.sleep(0.3)
+        val = driver.execute_script("var s=document.querySelector('[data-qa=\"page-size\"] select');return s? s.value: null;")
+        if val == "100":
+            el = driver.find_element(By.CSS_SELECTOR, '[data-qa="page-size"] select')
+            dbg_mark(driver, el, COLORS["page_size"], "page-size:100")
+            logging.info("Отображение: 100 (select)")
+            return
+        btn = driver.find_elements(By.XPATH, "//button[normalize-space(.)='100']")
+        if btn:
+            btn[0].click()
+            dbg_mark(driver, btn[0], COLORS["page_size"], "page-size:100(btn)")
+            time.sleep(0.3)
+            logging.info("Отображение: 100 (кнопка)")
+        else:
+            logging.info("Контрол 'по 100' не найден — продолжим по умолчанию")
+    except SEL_EXC:
+        logging.info("Контрол 'по 100' не найден — продолжим по умолчанию")
+
+def get_total_pages(driver) -> int:
+    try:
+        total_btns = driver.find_elements(By.CSS_SELECTOR, "button[class*='total'], button.total-index")
+        for b in total_btns:
+            txt = (b.text or "").strip()
+            if txt.isdigit():
+                dbg_mark(driver, b, "#29b6f6", f"total={txt}")
+                return max(1, int(txt))
+        btns = driver.find_elements(By.CSS_SELECTOR, "button")
+        digits = [int((b.text or "0").strip()) for b in btns if (b.text or "").strip().isdigit()]
+        if digits:
+            last = max(digits)
+            # подсветим найденную последнюю цифру, если найдём элемент
+            for bt in btns:
+                if (bt.text or "").strip() == str(last):
+                    dbg_mark(driver, bt, "#29b6f6", f"last={last}")
+                    break
+            return max(1, last)
+    except SEL_EXC:
+        pass
+    return 1
+
+def get_current_page_number(driver) -> int:
+    try:
+        inputs = driver.find_elements(By.CSS_SELECTOR, "label input[type='number'], input[type='number']")
+        for el in inputs:
+            val = el.get_attribute("value") or ""
+            if val.isdigit():
+                return int(val)
+    except SEL_EXC:
+        pass
+    try:
+        active = driver.find_elements(By.CSS_SELECTOR, "button[aria-pressed='true'], button.active")
+        for b in active:
+            tx = (b.text or "").strip()
+            if tx.isdigit():
+                return int(tx)
+    except SEL_EXC:
+        pass
+    return 1
+
+def wait_cards_stable(driver, timeout: int = WAIT_LONG) -> bool:
+    end = time.time() + timeout
+    prev_first = None
+    while time.time() < end:
+        try:
+            cards = driver.find_elements(By.CSS_SELECTOR, 'div[data-qa^="truck-card-"]')
+            if cards:
+                first = cards[0].get_attribute("data-qa")
+                if first and first == prev_first:
+                    return True
+                prev_first = first
+            time.sleep(0.25)
+        except StaleElementReferenceException:
+            time.sleep(0.2)
+        except SEL_EXC:
+            time.sleep(0.2)
+    return False
+
+def navigate_to_page(driver, page: int) -> bool:
+    ensure_debug_ui(driver)
+    try:
+        dbg_hud(driver, f"Переход на страницу: {page}")
+        inputs = driver.find_elements(By.CSS_SELECTOR, "label input[type='number'], input[type='number']")
+        if inputs:
+            inp = inputs[0]
+            dbg_mark(driver, inp, COLORS["nav_input"], f"PAGE={page}")
+            inp.clear()
+            inp.send_keys(str(page))
+            inp.send_keys(Keys.ENTER)
+        else:
+            btns = driver.find_elements(By.CSS_SELECTOR, "button")
+            for b in btns:
+                if (b.text or "").strip() == str(page):
+                    dbg_mark(driver, b, COLORS["nav_input"], f"PAGE={page}")
+                    b.click()
+                    break
+        WebDriverWait(driver, WAIT_LONG).until(lambda _drv: get_current_page_number(_drv) == page)
+        wait_cards_stable(driver)
+        return True
+    except TimeoutException:
+        return False
+    except SEL_EXC:
+        return False
+
+def click_next_button(driver) -> Optional[bool]:
+    ensure_debug_ui(driver)
+    try:
+        current = get_current_page_number(driver)
+        cand = driver.find_elements(By.XPATH, "//button[contains(@class,'next') or @data-qa='next']")
+        if cand:
+            nxt = cand[0]
+            if nxt.get_attribute("disabled"):
+                return None
+            dbg_mark(driver, nxt, COLORS["nav_next"], "Next ▶")
+            nxt.click()
+        else:
+            cand = driver.find_elements(By.XPATH, "//button[.//svg or contains(.,'›') or contains(.,'Следующая')]")
+            if not cand:
+                return None
+            dbg_mark(driver, cand[0], COLORS["nav_next"], "Next ▶")
+            cand[0].click()
+        WebDriverWait(driver, WAIT_LONG).until(lambda _drv: get_current_page_number(_drv) == current + 1)
+        wait_cards_stable(driver)
+        return True
+    except TimeoutException:
+        return False
+    except SEL_EXC:
+        return False
+
+# ====== БЕЛЫЙ ЭКРАН / РЕСТАРТ ======
+
+def check_white_screen(driver) -> bool:
+    try:
+        src = driver.page_source or ""
+        if len(src) < 800:
+            return True
+        have_list = driver.find_elements(By.CSS_SELECTOR, 'div[data-qa="truck-cards"]')
+        have_card = driver.find_elements(By.CSS_SELECTOR, 'div[data-qa^="truck-card-"]')
+        have_empty = driver.find_elements(By.CSS_SELECTOR, '[data-qa="empty-result"]')
+        return not (have_list or have_card or have_empty)
+    except SEL_EXC:
+        return True
+
+def restart_driver(driver, restore_url: Optional[str] = None, restore_page: Optional[int] = None, headless: Optional[bool] = None):
+    with suppress(Exception):
+        driver.quit()
+    logging.info("Перезапуск драйвера...")
+    drv = _new_driver(headless=headless)  # наследуем текущую политику HEADFUL_SESSIONS
+    load_cookies(drv)
+    if restore_url:
+        drv.get(restore_url)
+        WebDriverWait(drv, WAIT_LONG).until(lambda _drv: _drv.execute_script("return document.readyState") == "complete")
+        ensure_debug_ui(drv)
+        if restore_page and restore_page > 1:
+            navigate_to_page(drv, restore_page)
     return drv
 
-# -----------------------------------------------------------------------------
-# ПУНКТ 1 — Авторизация/куки
-# -----------------------------------------------------------------------------
-def cmd_login() -> None:
-    drv = init_driver()
+# ====== ПАРСИНГ КАРТОЧЕК ======
+
+def _text(el) -> str:
     try:
-        drv.get("https://ati.su/")
-        ensure_session(drv)
-        _save_cookies(drv)
-    finally:
+        return (el.text or "").replace("\xa0", " ").strip()
+    except (AttributeError, StaleElementReferenceException):
+        return ""
+
+def _parse_price_block(root) -> Dict[str, Any]:
+    price_text = ""
+    try:
+        p = root.find_elements(By.CSS_SELECTOR, '[data-qa="price"], [class*="price"]')
+        if p:
+            price_text = _text(p[0])
+    except SEL_EXC:
+        pass
+
+    price_text_norm = price_text.replace("\xa0", " ").lower()
+
+    res: Dict[str, Any] = {
+        "pricing_model": None,
+        "price_total": None,
+        "price_per_km": None,
+        "currency": "RUB",
+        "vat_flags": [],
+        "cash_flags": [],
+        "raw": price_text
+    }
+
+    if "ндс" in price_text_norm:
+        res["vat_flags"].append("WithNds")
+    if "без ндс" in price_text_norm or "безндс" in price_text_norm:
+        res["vat_flags"].append("WithoutNds")
+    if "нал" in price_text_norm:
+        res["cash_flags"].append("Cash")
+    if "безнал" in price_text_norm:
+        res["cash_flags"].append("Cashless")
+
+    # 1 ₽ — placeholder
+    if re.search(r"(^|\s)1\s*₽($|\s)", price_text):
+        res["skip_reason"] = "placeholder_1_rub"
+        return res
+
+    # NN ₽/км
+    m = re.search(r"(\d[\d\s]*)\s*(?:₽|руб)\s*/\s*км", price_text_norm)
+    if m:
+        res["pricing_model"] = "per_km"
+        with suppress(Exception):
+            res["price_per_km"] = int(re.sub(r"\D+", "", m.group(1)))
+        return res
+
+    # NN ₽
+    m = re.search(r"(\d[\d\s]*)\s*(?:₽|руб)\b", price_text_norm)
+    if m:
+        res["pricing_model"] = "fixed"
+        with suppress(Exception):
+            res["price_total"] = int(re.sub(r"\D+", "", m.group(1)))
+        return res
+
+    # договорная
+    if "договор" in price_text_norm or "по запросу" in price_text_norm:
+        res["pricing_model"] = "negotiable"
+        return res
+
+    return res
+
+def parse_cards(driver) -> List[Dict[str, Any]]:
+    ensure_debug_ui(driver)
+    dbg_hud(driver, "Парсим карточки...")
+    out: List[Dict[str, Any]] = []
+    cards = driver.find_elements(By.CSS_SELECTOR, 'div[data-qa^="truck-card-"]')
+    for idx in range(len(cards)):
         try:
-            drv.quit()
-        except Exception:
-            pass
+            cards = driver.find_elements(By.CSS_SELECTOR, 'div[data-qa^="truck-card-"]')
+            c = cards[idx]
+        except SEL_EXC:
+            continue
 
-# -----------------------------------------------------------------------------
-# ПУНКТ 2 — Запись параметров фильтра (произвольный)
-# -----------------------------------------------------------------------------
-def cmd_save_ad_hoc_filter() -> None:
-    name = input("Введите имя фильтра (например: 'Москва → Екатеринбург, 20т тент'): ").strip()
-    if not name:
-        logging.error("Имя фильтра пусто — отмена.")
-        return
+        try:
+            dbg_mark(driver, c, COLORS["card"], f"card[{idx}]")
+            qa = c.get_attribute("data-qa") or ""
+            href = ""
+            a = c.find_elements(By.CSS_SELECTOR, "a[href]")
+            if a:
+                href = a[0].get_attribute("href") or ""
 
-    drv = init_driver()
-    try:
-        ensure_session(drv)
-        drv.get(TRUCKS_BASE)
-        print("\nОткройте/настройте фильтр на trucks.ati.su, затем нажмите Enter для сохранения URL…")
-        input("> ")
+            origin = destination = ""
+            with suppress(SEL_EXC):
+                route = c.find_elements(By.CSS_SELECTOR, '[data-qa*="route"], [class*="route"], [data-qa*="direction"]')
+                if route:
+                    txt = _text(route[0])
+                    m = re.split(r"[-–→↔>]+", txt)
+                    if len(m) >= 2:
+                        origin = m[0].strip()
+                        destination = m[-1].strip()
 
-        url = drv.current_url
-        if not url or "trucks.ati.su" not in url:
-            logging.error("Кажется, вы не на странице trucks.ati.su — фильтр не сохранён.")
-            return
+            body_type = None
+            weight = volume = None
+            with suppress(SEL_EXC):
+                specs = c.find_elements(By.CSS_SELECTOR, '[data-qa*="spec"], [class*="spec"]')
+                if specs:
+                    t = _text(specs[0]).lower()
+                    mw = re.search(r"(\d+(?:[.,]\d+)?)\s*т", t)
+                    if mw:
+                        weight = float(mw.group(1).replace(",", "."))
+                    mv = re.search(r"(\d+(?:[.,]\d+)?)\s*м3", t)
+                    if mv:
+                        volume = float(mv.group(1).replace(",", "."))
+                    for bt in ("тент", "рефрижератор", "фургон", "контейнер", "борт", "изотерм", "лесовоз", "самосвал"):
+                        if bt in t:
+                            body_type = bt
+                            break
 
-        filters = _load_json(PROGRESS_FILTER_FILE, {"filters": {}, "progress": {}})
-        filters["filters"][name] = url
-        filters["progress"][name] = 1  # сбрасываем прогресс фильтра
-        _save_json(PROGRESS_FILTER_FILE, filters)
-        print(f"\n✓ Фильтр '{name}' сохранён. Прогресс по фильтру сброшен на 1.\n")
-
-    finally:
-        try: drv.quit()
-        except Exception: pass
-
-# -----------------------------------------------------------------------------
-# ПУНКТ 3 — Парсинг транспорта по сохранённому фильтру
-# -----------------------------------------------------------------------------
-def cmd_parse_saved_filter() -> None:
-    meta = _load_json(PROGRESS_FILTER_FILE, {"filters": {}, "progress": {}})
-    filters: Dict[str, str] = meta.get("filters", {})
-    progress: Dict[str, int] = meta.get("progress", {})
-
-    if not filters:
-        logging.error("Нет сохранённых фильтров. Сначала выполните пункт 2.")
-        return
-
-    # берём единственный или спрашиваем имя
-    if len(filters) == 1:
-        name = list(filters.keys())[0]
-    else:
-        print("Сохранённые фильтры:")
-        for i, k in enumerate(filters.keys(), 1):
-            print(f"{i}. {k}")
-        name = input("Имя фильтра для парсинга: ").strip()
-
-    url = filters.get(name)
-    if not url:
-        logging.error("Фильтр '%s' не найден.", name)
-        return
-
-    start_page = int(progress.get(name, 1))
-    drv = init_driver()
-    try:
-        ensure_session(drv)
-        drv.get(url)
-        _sleep(0.2, 0.4)
-
-        # доходим до страницы прогресса
-        go_to_page(drv, start_page)
-        cur, total = get_current_and_total_pages(drv)
-        logging.info("ОБЩЕЕ КОЛИЧЕСТВО СТРАНИЦ: %d", total)
-
-        pages_done = 0
-        while True:
-            if stop_requested:
-                break
-            logging.info("Перед парсингом страницы %d. Использование памяти: ~", cur)
-            saved, dups = parse_page(drv)
-            logging.info("Страница %d/%d: обработано %d, сохранено %d, дубликатов %d",
-                         cur, total, saved + dups, saved, dups)
-
-            # прогресс по фильтру
-            progress[name] = cur
-            _save_json(PROGRESS_FILTER_FILE, {"filters": filters, "progress": progress})
-
-            pages_done += 1
-            if pages_done % DRIVER_RESTART_EVERY_N_PAGES == 0 and cur < total:
-                logging.info("Жёсткая перезагрузка после страницы %d", cur)
-                drv = recover_and_apply_url(cur, url)  # восстановимся на текущей
-            else:
-                if not click_next_page(drv):
-                    logging.info("Кнопка 'Далее' неактивна — последняя страница")
-                    break
-
-            cur, total = get_current_and_total_pages(drv)
-
-        logging.info("[DONE] Парсинг по фильтру '%s' завершён.", name)
-
-    finally:
-        try: drv.quit()
-        except Exception: pass
-
-# -----------------------------------------------------------------------------
-# ПУНКТ 6 — Мастер сохранения фильтров для авто‑обхода
-# -----------------------------------------------------------------------------
-def cmd_save_filters_for_all_regions() -> None:
-    print("================================================================")
-    print("МАСТЕР СОХРАНЕНИЯ ФИЛЬТРОВ ДЛЯ АВТОПАРСИНГА (trucks.ati.su)")
-    print("================================================================")
-    print("1 - Только RUSSIAN_REGIONS")
-    print("2 - Только MOSCOW_OBLAST_COMBINATIONS")
-    print("3 - Оба списка (всё)")
-    pick = input("> Выбор набора (Enter=3): ").strip() or "3"
-    start_idx_str = input("> Стартовый индекс (Enter=0): ").strip() or "0"
-
-    try:
-        start_idx = max(0, int(start_idx_str))
-    except ValueError:
-        start_idx = 0
-
-    if pick == "1":
-        regions = RUSSIAN_REGIONS
-    elif pick == "2":
-        regions = MOSCOW_OBLAST_COMBINATIONS
-    else:
-        regions = RUSSIAN_REGIONS + MOSCOW_OBLAST_COMBINATIONS
-
-    print(f"\nВыбрано: {('RUSSIAN_REGIONS' if pick=='1' else 'MOSCOW' if pick=='2' else 'Оба списка (всё)')}. "
-          f"Всего регионов: {len(regions)}. Начинаем с idx={start_idx}.\n")
-
-    drv = init_driver()
-    try:
-        ensure_session(drv)
-        stored = _load_json(FILTERS_DIR + "/car_region_filters.json", {})
-
-        for i, region in enumerate(regions[start_idx:], start=start_idx + 1):
-            print("----------------------------------------------------------------")
-            print(f"[{i}/{len(regions)}] Регион: {region}")
-            drv.get(TRUCKS_BASE)
-            print("Открыл страницу транспорта. Настройте фильтр вручную (даты/типы/маршруты),")
-            print("затем вернитесь в терминал и нажмите Enter для сохранения.")
-            print("Введите 's' чтобы пропустить этот регион, 'q' чтобы завершить мастер.")
-            cmd = input("> (Enter=сохранить / s=пропустить / q=выход): ").strip().lower()
-            if cmd == "q":
-                break
-            if cmd == "s":
+            price = _parse_price_block(c)
+            if price.get("skip_reason") == "placeholder_1_rub":
                 continue
 
-            try:
-                url = current_driver.current_url
-                if not url or "trucks.ati.su" not in url:
-                    raise RuntimeError("URL пуст или не trucks.ati.su")
-                stored[region] = url
-                _save_json(FILTERS_DIR + "/car_region_filters.json", stored)
-                print(f"✓ Фильтр для региона '{region}' сохранён.")
-            except Exception as e:
-                logging.warning("[Filter] ошибка сохранения фильтра: %s", e)
-                print("! Не удалось сохранить (URL пуст?). Попробуйте ещё раз для этого региона.")
-                if input("> Повторить сохранение? (y/N): ").strip().lower() == "y":
-                    continue
+            company = ""
+            with suppress(SEL_EXC):
+                cm = c.find_elements(By.CSS_SELECTOR, '[data-qa*="company"], [class*="company"]')
+                if cm:
+                    company = _text(cm[0])
+                    dbg_mark(driver, cm[0], COLORS["company"], "Компания")
 
-    finally:
-        try: drv.quit()
-        except Exception: pass
+            posted_at = None
+            with suppress(SEL_EXC):
+                tm = c.find_elements(By.CSS_SELECTOR, "time, [datetime]")
+                if tm:
+                    posted_at = tm[0].get_attribute("datetime") or tm[0].get_attribute("title") or _text(tm[0])
 
-# -----------------------------------------------------------------------------
-# ПУНКТ 4 — Автоматический парсинг всех регионов
-# -----------------------------------------------------------------------------
-def cmd_auto_parse_all_regions() -> None:
-    filters_path = FILTERS_DIR + "/car_region_filters.json"
-    region_filters: Dict[str, str] = _load_json(filters_path, {})
-    if not region_filters:
-        logging.error("Фильтры регионов не найдены. Сначала выполните пункт 6.")
-        return
+            rec = {
+                "_dedup_key": qa or href,
+                "id": qa,
+                "href": href,
+                "origin": origin,
+                "destination": destination,
+                "body_type": body_type,
+                "weight_t": weight,
+                "volume_m3": volume,
+                "company": company,
+                "price": price,
+                "posted_at": posted_at,
+                "ts": int(time.time()),
+            }
+            out.append(rec)
+        except SEL_EXC:
+            continue
+    return out
 
-    progress = _load_json(PROGRESS_REGIONS_FILE, {"region": None, "page": 1})
-    resume_region = progress.get("region")
-    resume_page = int(progress.get("page") or 1)
+# ====== ПРОГРЕСС ======
 
-    drv = init_driver()
-    try:
-        ensure_session(drv)
+def get_next_page_for_filter(name: str) -> int:
+    mp = read_json(FILTER_PROGRESS, {})
+    return int(mp.get(name, 1))
 
-        regions = list(region_filters.keys())
-        start_index = 0
-        if resume_region in region_filters:
-            start_index = regions.index(resume_region)
+def set_next_page_for_filter(name: str, next_page: int) -> None:
+    mp = read_json(FILTER_PROGRESS, {})
+    mp[name] = int(max(1, next_page))
+    write_json(FILTER_PROGRESS, mp)
 
-        page_counter = 0
-        for idx in range(start_index, len(regions)):
-            if stop_requested:
+def load_region_progress() -> Dict[str, Any]:
+    return read_json(REGION_PROGRESS, {"region": "", "page": 0, "total_pages": 0, "region_idx": 0})
+
+def save_region_progress(region: str, page: int, total_pages: int, region_idx: int) -> None:
+    write_json(REGION_PROGRESS, {
+        "region": region,
+        "page": int(page),
+        "total_pages": int(total_pages),
+        "region_idx": int(region_idx),
+    })
+
+# ====== РЕЖИМЫ РАБОТЫ ======
+
+def run_parse_filter(driver, name: str, url: str) -> None:
+    logging.info("Старт фильтра '%s'. Память: %.2f MB", name, memory_usage_mib())
+    driver.get(url)
+    WebDriverWait(driver, WAIT_LONG).until(lambda _drv: _drv.execute_script("return document.readyState") == "complete")
+    ensure_debug_ui(driver)
+    dbg_hud(driver, f"Фильтр: {name}")
+    ensure_100_rows(driver)
+    total_pages = get_total_pages(driver)
+    start_page = get_next_page_for_filter(name)
+    start_page = max(1, min(start_page, total_pages))
+    logging.info("ОБЩЕЕ КОЛИЧЕСТВО СТРАНИЦ: %s", total_pages)
+
+    out_path = PARSERS_DIR / f"{slugify(name)}.jsonl"
+    pages_ok = 0
+    since_restart = 0
+
+    for page in range(start_page, total_pages + 1):
+        if STOP_FILE.exists():
+            logging.info("Найден stop.txt — мягкая остановка после страницы %s", page)
+            break
+
+        if not navigate_to_page(driver, page):
+            logging.warning("Не удалось перейти на страницу %s — прерываю фильтр", page)
+            break
+
+        if check_white_screen(driver):
+            logging.warning("Обнаружен 'белый экран' на странице %s — перезапуск драйвера", page)
+            driver = restart_driver(driver, restore_url=url, restore_page=page, headless=None)
+            if check_white_screen(driver):
+                logging.error("После перезапуска экран по-прежнему пуст — выхожу из фильтра")
                 break
 
-            region = regions[idx]
-            url = region_filters[region]
-            logging.info("Начало обработки региона %s (%d/%d)", region, idx + 1, len(regions))
+        logging.info("Перед парсингом страницы %s. Память: %.2f MB", page, memory_usage_mib())
+        dbg_hud(driver, f"Парсинг страницы {page}/{total_pages}")
+        rows = parse_cards(driver)
+        saved, dups = append_jsonl(out_path, rows)
+        logging.info("Страница %s/%s: найдено %s, сохранено %s, дубликатов %s",
+                     page, total_pages, len(rows), saved, dups)
 
-            drv.get(url)
-            _sleep(0.2, 0.4)
+        set_next_page_for_filter(name, page + 1)
+        pages_ok += 1
+        since_restart += 1
 
-            # восстановление страницы
-            target_page = resume_page if (resume_region == region) else 1
-            go_to_page(drv, target_page)
+        if page == total_pages:
+            logging.info("Кнопка 'Далее' неактивна — последняя страница")
+            break
 
-            cur, total = get_current_and_total_pages(drv)
-            logging.info("ОБЩЕЕ КОЛИЧЕСТВО СТРАНИЦ: %d", total)
+        moved = click_next_button(driver)
+        if moved is None:
+            logging.info("Кнопка 'Далее' неактивна — последняя страница")
+            break
+        if moved is False:
+            navigate_to_page(driver, page + 1)
 
-            while True:
-                if stop_requested:
-                    break
+        if since_restart >= HARD_RESTART_EVERY:
+            logging.info("Профилактический перезапуск драйвера...")
+            driver = restart_driver(driver, restore_url=url, restore_page=page + 1, headless=None)
+            since_restart = 0
 
-                saved, dups = parse_page(drv)
-                logging.info("Страница %d/%d: обработано %d, сохранено %d, дубликатов %d",
-                             cur, total, saved + dups, saved, dups)
+    logging.info("Успешно обработан фильтр '%s'. Страниц OK: %s/%s", name, pages_ok, total_pages)
 
-                # обновим прогресс регионов
-                _save_json(PROGRESS_REGIONS_FILE, {"region": region, "page": cur})
+def run_parse_region(driver, region_name: str, region_idx: int, url: str) -> None:
+    logging.info("Начало региона %s (%s/%s). Память: %.2f MB", region_name, region_idx, len(ALL_REGIONS_164), memory_usage_mib())
+    driver.get(url)
+    WebDriverWait(driver, WAIT_LONG).until(lambda _drv: _drv.execute_script("return document.readyState") == "complete")
+    ensure_debug_ui(driver)
+    dbg_hud(driver, f"Регион: {region_name}")
+    ensure_100_rows(driver)
+    total_pages = get_total_pages(driver)
+    prog = load_region_progress()
+    if prog.get("region") == region_name:
+        start_page = max(1, int(prog.get("page", 1)))
+    else:
+        start_page = 1
+    save_region_progress(region_name, start_page, total_pages, region_idx)
+    logging.info("ОБЩЕЕ КОЛИЧЕСТВО СТРАНИЦ: %s", total_pages)
 
-                page_counter += 1
-                if page_counter % DRIVER_RESTART_EVERY_N_PAGES == 0 and cur < total:
-                    logging.info("Жёсткая перезагрузка после страницы %d", cur)
-                    drv = recover_and_apply_url(cur, url)
-                else:
-                    if not click_next_page(drv):
-                        logging.info("Кнопка 'Далее' неактивна — последняя страница")
-                        break
+    out_path = REGIONS_DATA_DIR / f"{region_idx:03d}_{slugify(region_name)}.jsonl"
+    pages_ok = 0
+    since_restart = 0
 
-                cur, total = get_current_and_total_pages(drv)
+    for page in range(start_page, total_pages + 1):
+        if STOP_FILE.exists():
+            logging.info("Найден stop.txt — мягкая остановка после страницы %s", page)
+            break
 
-            # регион завершён — сбросим страницу на 1, подготовимся к следующему
-            _save_json(PROGRESS_REGIONS_FILE, {"region": region, "page": 1})
-            # пауза между регионами
-            _sleep(0.8, 1.6)
+        if not navigate_to_page(driver, page):
+            logging.warning("Не удалось перейти на страницу %s — прерываю регион '%s'", page, region_name)
+            break
 
+        if check_white_screen(driver):
+            logging.warning("Обнаружен 'белый экран' на странице %s — перезапуск драйвера", page)
+            driver = restart_driver(driver, restore_url=url, restore_page=page, headless=None)
+            if check_white_screen(driver):
+                logging.error("После перезапуска экран по-прежнему пуст — выхожу из региона '%s'", region_name)
+                break
+
+        logging.info("Перед парсингом страницы %s. Память: %.2f MB", page, memory_usage_mib())
+        dbg_hud(driver, f"Парсинг страницы {page}/{total_pages}")
+        rows = parse_cards(driver)
+        saved, dups = append_jsonl(out_path, rows)
+        logging.info("Страница %s/%s: найдено %s, сохранено %s, дубликатов %s",
+                     page, total_pages, len(rows), saved, dups)
+
+        save_region_progress(region_name, page + 1, total_pages, region_idx)
+        pages_ok += 1
+        since_restart += 1
+
+        if page == total_pages:
+            logging.info("Кнопка 'Далее' неактивна — последняя страница")
+            break
+
+        moved = click_next_button(driver)
+        if moved is None:
+            logging.info("Кнопка 'Далее' неактивна — последняя страница")
+            break
+        if moved is False:
+            navigate_to_page(driver, page + 1)
+
+        if since_restart >= HARD_RESTART_EVERY:
+            logging.info("Профилактический перезапуск драйвера...")
+            driver = restart_driver(driver, restore_url=url, restore_page=page + 1, headless=None)
+            since_restart = 0
+
+    logging.info("Регион '%s' завершён. Страниц OK: %s/%s", region_name, pages_ok, total_pages)
+
+# ====== КОМАНДЫ МЕНЮ ======
+
+def cmd_authorize() -> None:
+    drv = _new_driver(headless=False)
+    try:
+        drv.get(LISTING_URL)
+        ensure_debug_ui(drv)
+        dbg_hud(drv, "Авторизация: выполните вход в аккаунт ATI, затем вернитесь в терминал")
+        print("\n=== РУЧНАЯ АВТОРИЗАЦИЯ ATI ===")
+        print("1) В открывшемся окне Chrome выполните вход в аккаунт ATI")
+        print("2) Вернитесь в терминал и нажмите Enter — я сохраню cookies")
+        input("Нажмите Enter после входа в аккаунт >>> ")
+        save_cookies(drv)
+        ok, uname = is_logged_in(drv)
+        if ok:
+            logging.info("Авторизация подтверждена: %s", uname)
+        else:
+            logging.warning("Не удалось подтвердить авторизацию. Продолжу, но парсинг может не работать.")
     finally:
-        try: drv.quit()
-        except Exception: pass
+        with suppress(Exception):
+            drv.quit()
 
-# -----------------------------------------------------------------------------
-# ПУНКТ 5 — Создать stop.txt
-# -----------------------------------------------------------------------------
-def cmd_create_stop_file() -> None:
-    with open(os.path.join(SCRIPT_DIR, "stop.txt"), "w", encoding="utf-8") as f:
-        f.write("stop")
-    print("✓ stop.txt создан рядом со скриптом.")
-
-# -----------------------------------------------------------------------------
-# МЕНЮ
-# -----------------------------------------------------------------------------
-def interactive_menu() -> None:
-    print("==========================================================")
-    print("ПОИСК ТРАНСПОРТА (trucks.ati.su)")
-    print("==========================================================")
-    print("Выберите действие:")
-    print("1 - Авторизация (общая, cookies)")
-    print("2 - Запись параметров фильтра (произвольный)")
-    print("3 - Парсинг транспорта по сохранённому фильтру")
-    print("4 - Автоматический парсинг всех регионов")
-    print("5 - Создать файл остановки (stop.txt)")
-    print("6 - Настройка фильтров для всех регионов")
-    print("7 - Выход")
-    choice = input("> ").strip()
-
-    if choice == "1":
-        cmd_login()
-    elif choice == "2":
-        cmd_save_ad_hoc_filter()
-    elif choice == "3":
-        cmd_parse_saved_filter()
-    elif choice == "4":
-        cmd_auto_parse_all_regions()
-    elif choice == "5":
-        cmd_create_stop_file()
-    elif choice == "6":
-        cmd_save_filters_for_all_regions()
-    else:
-        print("Выход.")
-
-# -----------------------------------------------------------------------------
-# CLI
-# -----------------------------------------------------------------------------
-def main(argv: List[str]) -> None:
-    if not argv:
-        interactive_menu()
+def cmd_record_filter() -> None:
+    name = input("Введите имя фильтра (например: 'МО → Урал, 20т тент'): ").strip()
+    if not name:
+        print("Имя фильтра не задано.")
         return
-    cmd = argv[0].lower()
-    if cmd == "login":
-        cmd_login()
-    elif cmd == "save_filter":
-        cmd_save_ad_hoc_filter()
-    elif cmd == "parse_filter":
-        cmd_parse_saved_filter()
-    elif cmd == "parse_all":
-        cmd_auto_parse_all_regions()
-    elif cmd == "mkstop":
-        cmd_create_stop_file()
-    else:
-        print("Использование:\n"
-              "  python ati_cars_parser.py login\n"
-              "  python ati_cars_parser.py save_filter\n"
-              "  python ati_cars_parser.py parse_filter\n"
-              "  python ati_cars_parser.py parse_all\n"
-              "  python ati_cars_parser.py mkstop\n")
+    drv = _new_driver(headless=False)
+    try:
+        load_cookies(drv)
+        is_logged_in(drv)
+        drv.get(LISTING_URL)
+        ensure_debug_ui(drv)
+        dbg_hud(drv, "Настройте фильтр в этом окне, затем вернитесь и нажмите Enter")
+        print("\nОткрыл страницу поиска транспорта.")
+        print("Настройте фильтр в открытом браузере (регион/направление/тип и т.д.).")
+        print("После настройки вернитесь в терминал и нажмите Enter — я сохраню URL фильтра.")
+        input("Нажмите Enter, когда фильтр настроен >>> ")
+        url = drv.current_url
+        rec = {"name": name, "url": url, "ts": int(time.time())}
+        path = FILTERS_DIR / f"{slugify(name)}.json"
+        write_json(path, rec)
+        set_next_page_for_filter(name, 1)
+        logging.info("Фильтр '%s' сохранён: %s", name, path)
+    finally:
+        with suppress(Exception):
+            drv.quit()
+
+def cmd_parse_saved_filter() -> None:
+    files = sorted(FILTERS_DIR.glob("*.json"))
+    if not files:
+        print("Нет сохранённых фильтров. Сначала выполните пункт 2.")
+        return
+    print("\nСохранённые фильтры:")
+    for i, p in enumerate(files, 1):
+        rec = read_json(p, {})
+        nm = rec.get("name") or p.stem
+        print(f"{i}. {nm}")
+    try:
+        idx = int(input("Выберите номер фильтра >>> ").strip())
+    except ValueError:
+        print("Неверный ввод.")
+        return
+    if idx < 1 or idx > len(files):
+        print("Неверный номер.")
+        return
+    rec = read_json(files[idx - 1], {})
+    url = rec.get("url")
+    name = rec.get("name") or files[idx - 1].stem
+    if not url:
+        print("В выбранном файле нет URL.")
+        return
+
+    drv = _new_driver(headless=False if HEADFUL_SESSIONS else True)
+    try:
+        load_cookies(drv)
+        is_logged_in(drv)
+        run_parse_filter(drv, name, url)
+    finally:
+        with suppress(Exception):
+            drv.quit()
+
+def cmd_setup_filters_for_all_regions() -> None:
+    print("\nМАСТЕР СОХРАНЕНИЯ ФИЛЬТРОВ ДЛЯ ВСЕХ РЕГИОНОВ")
+    print("Для каждого региона я открою страницу. Настройте фильтр (например, откуда/куда),")
+    print("затем нажмите Enter — я сохраню URL в JSON.")
+    drv = _new_driver(headless=False)
+    try:
+        load_cookies(drv)
+        is_logged_in(drv)
+        for idx, region in enumerate(ALL_REGIONS_164, 1):
+            drv.get(LISTING_URL)
+            WebDriverWait(drv, WAIT_LONG).until(lambda _drv: _drv.execute_script("return document.readyState") == "complete")
+            ensure_debug_ui(drv)
+            dbg_hud(drv, f"[{idx}/{len(ALL_REGIONS_164)}] Регион: {region}\nНастройте фильтр и нажмите Enter в терминале")
+            print(f"\n[{idx}/{len(ALL_REGIONS_164)}] Регион: {region}")
+            print("Настройте фильтр для этого региона в открытом окне браузера.")
+            input("Нажмите Enter, чтобы сохранить URL текущего фильтра >>> ")
+            url = drv.current_url
+            out = REGION_FILTERS_DIR / f"{idx:03d}_{slugify(region)}.json"
+            write_json(out, {"region": region, "url": url, "ts": int(time.time())})
+            print(f"✔ Сохранено: {out}")
+    finally:
+        with suppress(Exception):
+            drv.quit()
+
+def cmd_parse_all_regions() -> None:
+    files = sorted(REGION_FILTERS_DIR.glob("*.json"))
+    if not files:
+        print("Нет сохранённых региональных фильтров. Сначала выполните пункт 6.")
+        return
+    drv = _new_driver(headless=False if HEADFUL_SESSIONS else True)
+    try:
+        load_cookies(drv)
+        is_logged_in(drv)
+        prog = load_region_progress()
+        start_idx = int(prog.get("region_idx", 1))
+        start_idx = max(1, start_idx)
+
+        for idx, p in enumerate(files, 1):
+            if idx < start_idx:
+                continue
+            region_rec = read_json(p, {})
+            region_name = region_rec.get("region") or p.stem.split("_", 1)[-1]
+            url = region_rec.get("url")
+            if not url:
+                logging.warning("В файле '%s' отсутствует URL — пропускаю", p.name)
+                continue
+            try:
+                run_parse_region(drv, region_name, idx, url)
+                time.sleep(random.uniform(*PAUSE_BETWEEN_REGIONS))
+                save_region_progress(region_name, 0, 0, idx + 1)
+            except (WebDriverException, TimeoutException, json.JSONDecodeError, OSError) as e:
+                logging.error("Ошибка при обработке региона '%s': %s", region_name, e)
+                continue
+    finally:
+        with suppress(Exception):
+            drv.quit()
+
+def cmd_stop_file() -> None:
+    try:
+        STOP_FILE.write_text("stop", encoding="utf-8")
+        print("Создан stop.txt — парсер мягко завершится при ближайшей проверке.")
+    except OSError as e:
+        print("Не удалось создать stop.txt:", e)
+
+# ====== MAIN ======
+
+def main(argv: List[str]) -> None:
+    banner_once()
+    while True:
+        print("\nВыберите действие:")
+        print("1 - Авторизация (общая, cookies)")
+        print("2 - Запись параметров фильтра (произвольный)")
+        print("3 - Парсинг транспорта по сохранённому фильтру")
+        print("4 - Автоматический парсинг всех регионов")
+        print("5 - Создать файл остановки (stop.txt)")
+        print("6 - Настройка фильтров для всех регионов")
+        print("7 - Выход")
+        c = input("> ").strip()
+        if c == "1":
+            cmd_authorize()
+        elif c == "2":
+            cmd_record_filter()
+        elif c == "3":
+            cmd_parse_saved_filter()
+        elif c == "4":
+            cmd_parse_all_regions()
+        elif c == "5":
+            cmd_stop_file()
+        elif c == "6":
+            cmd_setup_filters_for_all_regions()
+        elif c == "7" or c.lower() in ("q", "quit", "exit"):
+            break
+        else:
+            print("Неизвестная команда")
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    try:
+        main(sys.argv[1:])
+    except KeyboardInterrupt:
+        print("\nЗавершение работы.")
