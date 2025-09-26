@@ -1,4 +1,6 @@
-# Python artifacts
+# ====================================
+# Python артефакты и окружения
+# ====================================
 __pycache__/
 *.py[cod]
 *.pyo
@@ -8,41 +10,89 @@ __pycache__/
 dist/
 build/
 
-# Virtual environments
+# Виртуальные окружения
 .venv/
 venv/
 env/
 
-# Editors / OS
+# ====================================
+# IDE / ОС
+# ====================================
 .idea/
 .vscode/
+*.iml
 .DS_Store
+Thumbs.db
+desktop.ini
 
-# Tests / caches
+# ====================================
+# Кеши и тестовые артефакты
+# ====================================
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.ipynb_checkpoints/
 
-# Databases & caches
+# ====================================
+# Базы и кеши
+# ====================================
 data/db/pgdata/
 data/cache/
 data/models/
 *.sqlite3
 *.db-journal
+*.db
 
-# Parser working data
-src/parsers/cars_data/
-src/parsers/car_region_progress.json
+# ====================================
+# Парсер: рабочие артефакты (не в репо)
+# ====================================
+
+# Cookies
+src/parsers/ati_cookies.json
+src/parsers/auth/cookies/
+src/parsers/auth/cookies/**
+
+# Результаты парсинга (jsonl)
+*.jsonl
+
+# Каталоги данных (оставляем .gitkeep для структуры)
+src/parsers/regions_data_trucks/*
+!src/parsers/regions_data_trucks/.gitkeep
+
+src/parsers/regions_data/*
+!src/parsers/regions_data/.gitkeep
+
+src/parsers/data/*
+!src/parsers/data/.gitkeep
+
+src/parsers/data_transport/*
+!src/parsers/data_transport/.gitkeep
+
+# Прогресс/служебные файлы
+src/parsers/car_filter_progress.json
+src/parsers/region_progress_trucks.json
+
+# Профили Chrome
+src/parsers/trucks_profile/
+src/parsers/trucks_profile/**
 src/parsers/chrome_profile/
-src/parsers/chrome_profile_loads/
+src/parsers/chrome_profile/**
+src/parsers/chrome_profile_freights/
+src/parsers/chrome_profile_freights/**
 src/parsers/chrome_profile_transport/
+src/parsers/chrome_profile_transport/**
 
-# Logs
-logs/
+# ====================================
+# Логи
+# ====================================
 *.log
+logs/
+log/
 route_optimizer.log
 
-# Screenshots & images
+# ====================================
+# Скриншоты / изображения
+# ====================================
 screenshots/
 screens/
 img/raw/
@@ -55,17 +105,15 @@ images/raw/
 *.webp
 *.tiff
 
-# Notebooks checkpoints
-.ipynb_checkpoints/
-
-# Local env/config
+# ====================================
+# Локальные конфиги
+# ====================================
 .env
 
-# Inventory reports
+# ====================================
+# Инвентаризационные отчёты (внутренние)
+# ====================================
 PROJECT_INVENTORY.md
 project_filelist.csv
 project_candidates_delete.csv
 project_largefiles.csv
-
-# Stray artifacts
-=4.5.0
