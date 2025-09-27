@@ -1,5 +1,5 @@
 {
   "name": "Тест",
-  "url": "https://trucks.ati.su/?sort=createdAtDesc&FromGeo=0_1&fromGeoCountryId=1&ExactFromGeos=true&Cash=true&WithNds=true&WithoutNds=true",
-  "ts": 1758819654
+  "url": "https://trucks.ati.su/search?utm_source=header&utm_campaign=new_header&FromGeo=1_1&fromGeoCountryId=1&ExactFromGeos=true&WithNds=true&WithoutNds=true&FromGeo=1_1&fromGeoCountryId=1&ExactFromGeos=true&WithNds=true&WithoutNds=true&FromGeo=1_1&fromGeoCountryId=1&ExactFromGeos=true&WithNds=true&WithoutNds=true",
+  "saved_at": "2025-09-26T14:16:29.215572Z"
 }
