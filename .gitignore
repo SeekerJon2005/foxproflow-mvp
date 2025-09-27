@@ -32,6 +32,14 @@ desktop.ini
 .mypy_cache/
 .ruff_cache/
 .ipynb_checkpoints/
+.coverage*
+htmlcov/
+
+# Временные/бэкап файлы редакторов
+*.swp
+*.swo
+*.tmp
+*.bak
 
 # ====================================
 # Базы и кеши
@@ -71,6 +79,7 @@ src/parsers/data_transport/*
 # Прогресс/служебные файлы
 src/parsers/car_filter_progress.json
 src/parsers/region_progress_trucks.json
+src/parsers/car_region_progress.json  # прогресс парсера (cars)
 
 # Профили Chrome
 src/parsers/trucks_profile/
@@ -81,14 +90,16 @@ src/parsers/chrome_profile_freights/
 src/parsers/chrome_profile_freights/**
 src/parsers/chrome_profile_transport/
 src/parsers/chrome_profile_transport/**
+src/parsers/chrome_profile_loads/
 
-# ====================================
 # Логи
-# ====================================
 *.log
 logs/
 log/
 route_optimizer.log
+chromedriver.log
+chromedriver*.log
+geckodriver.log
 
 # ====================================
 # Скриншоты / изображения
@@ -109,6 +120,8 @@ images/raw/
 # Локальные конфиги
 # ====================================
 .env
+.env.*
+!.env.example
 
 # ====================================
 # Инвентаризационные отчёты (внутренние)
@@ -121,8 +134,5 @@ project_largefiles.csv
 # Celery schedule DB
 celerybeat-schedule
 
-# Прогресс парсера (cars)
-src/parsers/car_region_progress.json
-
-# Chrome-профиль (loads)
-src/parsers/chrome_profile_loads/
+# Глобально разрешаем .gitkeep в любых игнорируемых папках
+!**/.gitkeep
