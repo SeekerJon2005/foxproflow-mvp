@@ -1,9 +1,0 @@
-2025/09/25-20:00:00.996 328c Reusing MANIFEST C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\src\parsers\trucks_profile\Default\Local Storage\leveldb/MANIFEST-000001
-2025/09/25-20:00:01.000 328c Recovering log #105
-2025/09/25-20:00:01.002 328c Reusing old log C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\src\parsers\trucks_profile\Default\Local Storage\leveldb/000105.log 
-2025/09/25-20:00:13.059 8130 Level-0 table #109: started
-2025/09/25-20:00:13.063 8130 Level-0 table #109: 74016 bytes OK
-2025/09/25-20:00:13.064 8130 Delete type=0 #105
-2025/09/25-20:00:54.522 8130 Level-0 table #111: started
-2025/09/25-20:00:54.526 8130 Level-0 table #111: 67909 bytes OK
-2025/09/25-20:00:54.527 8130 Delete type=0 #108
