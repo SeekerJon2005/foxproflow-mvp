@@ -1,0 +1,26 @@
+
+FullName                                                                                                               
+--------                                                                                                               
+C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\src\parsers\chrome_profile\Default\Cache\Cache_Data\data_3                
+C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\src\parsers\chrome_profile\Default\Cache\Cache_Data\data_5                
+C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\src\parsers\chrome_profile\Default\Cache\Cache_Data\data_2                
+C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\.venv\Lib\site-packages\scipy.libs\libscipy_openblas-5b1ec8b915dfb81d11...
+C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\src\parsers\chrome_profile\Default\Cache\Cache_Data\data_6                
+C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\src\parsers\trucks_profile\Default\Cache\Cache_Data\data_3                
+C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\src\parsers\regions_data\Московская область\Московская область_2025-10-...
+C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\src\parsers\chrome_profile\component_crx_cache\619065ddbd9d01f9a2b6ddd6...
+C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\src\parsers\chrome_profile\WasmTtsEngine\20251003.1\bindings_main.wasm    
+C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\src\parsers\trucks_profile\component_crx_cache\e19600dc9fc61757973425d1...
+C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\.venv\Lib\site-packages\numpy.libs\libscipy_openblas64_-13e2df515630b4a...
+C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\src\parsers\regions_data\Московская область\Московская область_2025-10-...
+C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\src\parsers\ati_parser.log                                                
+C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\data\db\pgdata\pg_wal\000000010000000000000001                            
+C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\src\parsers\chrome_profile\Default\Cache\Cache_Data\data_1                
+C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\src\parsers\chrome_profile\Default\Cache\Cache_Data\data_4                
+C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\src\parsers\data_transport\Test.jsonl                                     
+C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\src\parsers\regions_data\Московская область\Московская область_2025-10-...
+C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\src\parsers\regions_data\filter\filter_2025-09-24_16-02-49.jsonl          
+C:\Users\Evgeniy\projects\foxproflow-mvp 2.0\src\parsers\chrome_profile_transport\component_crx_cache\00ca7cf017469d...
+
+
+
