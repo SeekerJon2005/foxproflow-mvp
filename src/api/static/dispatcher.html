@@ -1,0 +1,1077 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>FoxProFlow — Диспетчер</title>
+
+  <!-- Брендовый шрифт -->
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --ff-accent: #FF4500;
+      --ff-accent-soft: rgba(255, 69, 0, .16);
+      --ff-bg: #050608;
+      --ff-bg-elevated: #101217;
+      --ff-border: #262932;
+      --ff-border-soft: rgba(192,192,192,.18);
+      --ff-text: #F5F5F5;
+      --ff-muted: #C0C0C0;
+      --ff-danger: #E60000;
+      --ff-success: #25c25b;
+
+      --ff-radius-sm: 6px;
+      --ff-radius-md: 10px;
+      --ff-radius-lg: 16px;
+
+      --ff-shadow-soft: 0 18px 40px rgba(0, 0, 0, 0.45);
+
+      --ff-font-main: "Montserrat", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --ff-fs-xs: 12px;
+      --ff-fs-sm: 13px;
+      --ff-fs-md: 14px;
+      --ff-fs-lg: 16px;
+      --ff-fs-xl: 20px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: radial-gradient(circle at top left, #151924 0, #050608 52%);
+      color: var(--ff-text);
+      font-family: var(--ff-font-main);
+      font-size: var(--ff-fs-md);
+    }
+
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: stretch;
+    }
+
+    .shell {
+      width: 100%;
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 16px 20px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      min-height: 100vh;
+    }
+
+    /* Topbar */
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      border-radius: var(--ff-radius-lg);
+      background: linear-gradient(135deg, rgba(16,18,23,0.96), rgba(7,9,12,0.98));
+      border: 1px solid var(--ff-border);
+      box-shadow: var(--ff-shadow-soft);
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .logo-pill {
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      background: radial-gradient(circle at 20% 0, #FFC2A0 0, var(--ff-accent) 40%, #9b2500 75%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: var(--ff-fs-sm);
+      color: #fff;
+      letter-spacing: 0.04em;
+      box-shadow: 0 0 0 2px rgba(255, 69, 0, .35);
+      flex-shrink: 0;
+    }
+
+    .brand-block {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .brand-title {
+      font-size: var(--ff-fs-xl);
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+
+    .brand-subtitle {
+      font-size: var(--ff-fs-xs);
+      color: var(--ff-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+    }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      min-width: 0;
+      margin-left: auto;
+    }
+
+    .env-badge {
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--ff-border-soft);
+      font-size: var(--ff-fs-xs);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--ff-muted);
+      background: rgba(16,18,23,0.85);
+      white-space: nowrap;
+    }
+
+    .metric-block {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .metric-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .metric-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(10,12,18,0.9);
+      border: 1px solid var(--ff-border-soft);
+      font-size: var(--ff-fs-xs);
+      color: var(--ff-muted);
+      white-space: nowrap;
+    }
+
+    .metric-pill strong {
+      color: var(--ff-text);
+      font-weight: 500;
+    }
+
+    .metric-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--ff-accent);
+      box-shadow: 0 0 0 4px rgba(255,69,0,.18);
+    }
+
+    .metric-dot--ok {
+      background: var(--ff-success);
+      box-shadow: 0 0 0 4px rgba(37,194,91,.2);
+    }
+
+    .timestamp {
+      font-size: var(--ff-fs-xs);
+      color: var(--ff-muted);
+    }
+
+    .topbar-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .topbar-btn {
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,69,0,0.5);
+      background: radial-gradient(circle at 30% 0, rgba(255,255,255,0.06) 0, rgba(255,69,0,0.2) 30%, rgba(16,18,23,0.98) 80%);
+      color: #fff;
+      font-size: var(--ff-fs-xs);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .topbar-btn:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.8fr) minmax(0, 2.3fr);
+      gap: 16px;
+      align-items: stretch;
+      flex: 1;
+      min-height: 0;
+    }
+
+    .panel {
+      padding: 12px 12px 10px;
+      border-radius: var(--ff-radius-lg);
+      background: rgba(7,9,14,0.96);
+      border: 1px solid var(--ff-border);
+      box-shadow: 0 12px 28px rgba(0,0,0,0.5);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 0;
+    }
+
+    .panel--full {
+      grid-column: 1 / -1;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+
+    .panel-title {
+      font-size: var(--ff-fs-lg);
+      font-weight: 600;
+    }
+
+    .panel-subtitle {
+      font-size: var(--ff-fs-xs);
+      color: var(--ff-muted);
+    }
+
+    .panel-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--ff-border-soft);
+      font-size: var(--ff-fs-xs);
+      color: var(--ff-muted);
+      background: rgba(10,12,18,0.92);
+    }
+
+    .chip-label {
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+
+    .chip-value {
+      color: var(--ff-text);
+    }
+
+    .chip--accent {
+      border-color: rgba(255, 69, 0, 0.5);
+      background: var(--ff-accent-soft);
+      color: var(--ff-text);
+    }
+
+    .chip--accent .chip-label {
+      color: var(--ff-muted);
+    }
+
+    .chip-toggle-group {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      overflow: hidden;
+      border: 1px solid var(--ff-border-soft);
+      background: rgba(10,12,18,0.9);
+    }
+
+    .chip-toggle {
+      padding: 4px 10px;
+      font-size: var(--ff-fs-xs);
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      color: var(--ff-muted);
+    }
+
+    .chip-toggle--active {
+      background: var(--ff-accent-soft);
+      color: var(--ff-text);
+    }
+
+    .table-wrapper {
+      position: relative;
+      border-radius: var(--ff-radius-md);
+      border: 1px solid var(--ff-border);
+      background: rgba(8,10,15,0.96);
+    }
+
+    .table-wrapper--fill {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: var(--ff-fs-sm);
+      table-layout: fixed;
+    }
+
+    thead {
+      background: rgba(15,18,26,0.96);
+    }
+
+    th, td {
+      padding: 5px 8px;
+      border-bottom: 1px solid rgba(38,41,50,0.85);
+      text-align: left;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    th {
+      font-weight: 500;
+      color: var(--ff-muted);
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      backdrop-filter: blur(10px);
+    }
+
+    .col-wide {
+      white-space: normal;
+    }
+
+    tbody tr:nth-child(even) {
+      background: rgba(12,15,22,0.94);
+    }
+
+    tbody tr:nth-child(odd) {
+      background: rgba(9,12,18,0.98);
+    }
+
+    tbody tr:hover {
+      background: rgba(26, 32, 46, 0.98);
+    }
+
+    .col-num { text-align: right; }
+    .muted { color: var(--ff-muted); }
+    .nowrap { white-space: nowrap; }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: var(--ff-fs-xs);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      white-space: nowrap;
+    }
+
+    .tag--confirm {
+      background: rgba(37,194,91,0.14);
+      color: var(--ff-success);
+      border: 1px solid rgba(37,194,91,0.45);
+    }
+
+    .tag--apply {
+      background: rgba(0,123,255,0.14);
+      color: #7fbaff;
+      border: 1px solid rgba(127,186,255,0.5);
+    }
+
+    .tag--noop {
+      background: rgba(80,80,80,0.32);
+      color: var(--ff-muted);
+      border: 1px solid rgba(90,90,90,0.7);
+    }
+
+    .tag--alert-critical {
+      background: rgba(230,0,0,0.18);
+      color: #fee2e2;
+      border: 1px solid rgba(248,113,113,0.8);
+    }
+
+    .tag--alert-warn {
+      background: rgba(250,204,21,0.18);
+      color: #fef9c3;
+      border: 1px solid rgba(250,204,21,0.8);
+    }
+
+    .pill-small {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 4px;
+      font-size: var(--ff-fs-xs);
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(20,24,34,0.98);
+      border: 1px solid rgba(60,64,74,0.9);
+      color: var(--ff-muted);
+      white-space: nowrap;
+    }
+
+    .pill-small strong {
+      color: var(--ff-text);
+      font-weight: 500;
+    }
+
+    .filters-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 4px;
+    }
+
+    .input-text {
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--ff-border-soft);
+      background: rgba(10,12,18,0.96);
+      color: var(--ff-text);
+      font-size: var(--ff-fs-xs);
+      min-width: 160px;
+      outline: none;
+    }
+
+    .input-text::placeholder {
+      color: rgba(192,192,192,0.7);
+    }
+
+    .checkbox-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: var(--ff-fs-xs);
+      color: var(--ff-muted);
+      cursor: pointer;
+    }
+
+    .checkbox-label input {
+      margin: 0;
+      accent-color: var(--ff-accent);
+    }
+
+    .layout-main {
+      display: grid;
+      grid-template-columns: minmax(0, 1.8fr) minmax(0, 2.3fr);
+      gap: 16px;
+      align-items: stretch;
+      flex: 1;
+      min-height: 0;
+    }
+
+    .panel--full {
+      grid-column: 1 / -1;
+    }
+
+    @media (max-width: 1100px) {
+      .layout-main {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    @media (max-width: 768px) {
+      .topbar {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .topbar-right {
+        width: 100%;
+        justify-content: space-between;
+      }
+      .shell {
+        padding-inline: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="logo-pill">FP</div>
+        <div class="brand-block">
+          <div class="brand-title">FoxProFlow</div>
+          <div class="brand-subtitle">AI-CRM · ДИСПЕТЧЕР АВТОПЛАНА</div>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <div class="env-badge">MVP · PILOT</div>
+        <div class="metric-block">
+          <div class="metric-row">
+            <div class="metric-pill">
+              <span class="metric-dot metric-dot--ok"></span>
+              <span class="chip-label">АВТОПЛАН</span>
+              <strong id="metric-flow-plan">—</strong>
+            </div>
+            <div class="metric-pill">
+              <span class="chip-label">КВАНТИЛЬ</span>
+              <strong id="metric-quantile">p25</strong>
+            </div>
+            <div class="metric-pill">
+              <span class="chip-label">ОКНО РЫНКА</span>
+              <strong id="metric-days">—</strong>
+              <span class="muted">дн.</span>
+            </div>
+          </div>
+          <div class="topbar-controls">
+            <button id="btn-refresh" class="topbar-btn">ОБНОВИТЬ</button>
+            <label class="checkbox-label">
+              <input type="checkbox" id="auto-refresh" checked />
+              Автообновление 30 с
+            </label>
+            <div class="timestamp" id="metric-updated">Обновление: —</div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="layout-main">
+      <!-- Автоплан -->
+      <section class="panel" aria-label="Автоплан">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Автоплан</div>
+            <div class="panel-subtitle">Решения конвейера (audit → apply → confirm)</div>
+          </div>
+        </div>
+        <div class="panel-controls">
+          <div class="chip chip--accent">
+            <span class="chip-label">ПОРОГИ</span>
+            <span class="chip-value" id="summary-thresholds">rpm ≥ — · rph ≥ — · P≥ —</span>
+          </div>
+          <div class="chip">
+            <span class="chip-label">За запуск</span>
+            <span class="chip-value"><span id="summary-confirmed">0</span> рейсов</span>
+          </div>
+          <div class="chip-toggle-group" aria-label="Фильтр по решению автоплана">
+            <button class="chip-toggle chip-toggle--active" data-decision-filter="all">Все</button>
+            <button class="chip-toggle" data-decision-filter="confirm">Confirm</button>
+            <button class="chip-toggle" data-decision-filter="apply">Apply</button>
+            <button class="chip-toggle" data-decision-filter="noop">Noop</button>
+          </div>
+        </div>
+        <div class="table-wrapper table-wrapper--fill">
+          <table id="autoplanTable">
+            <thead>
+              <tr>
+                <th class="nowrap">Время</th>
+                <th>Решение</th>
+                <th class="col-wide">Причина</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Рейсы -->
+      <section class="panel" aria-label="Рейсы">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Рейсы</div>
+            <div class="panel-subtitle">Подтверждённые рейсы (strict)</div>
+          </div>
+          <div class="pill-small">
+            <span>Рейсов: <strong id="trips-count">0</strong></span>
+            <span class="muted">· средняя дистанция <strong id="trips-avg-km">—</strong> км</span>
+          </div>
+        </div>
+        <div class="filters-row">
+          <input
+            type="text"
+            class="input-text"
+            id="filter-search"
+            placeholder="Фильтр по O/D (например, Москва)"
+          />
+          <label class="checkbox-label">
+            <input type="checkbox" id="filter-longhaul" />
+            Только дальние (&gt; 500 км)
+          </label>
+        </div>
+        <div class="table-wrapper table-wrapper--fill">
+          <table id="tripsTable">
+            <thead>
+              <tr>
+                <th class="nowrap">Подтв.</th>
+                <th class="col-wide">O → D</th>
+                <th class="muted col-num">км</th>
+                <th class="muted col-num">часы</th>
+                <th class="col-num">RPM / RPH</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Off-route мониторинг -->
+      <section class="panel panel--full" aria-label="Off-route мониторинг">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Off-route мониторинг</div>
+            <div class="panel-subtitle">Рейсы с критическими отклонениями маршрута (по driver_telemetry)</div>
+          </div>
+          <div class="pill-small">
+            <span>Рейсов с алертами: <strong id="monitor-count">0</strong></span>
+          </div>
+        </div>
+        <div class="table-wrapper table-wrapper--fill">
+          <table id="monitorTable">
+            <thead>
+              <tr>
+                <th>Рейс</th>
+                <th>Маршрут</th>
+                <th>Водитель / ТС</th>
+                <th>Последняя точка</th>
+                <th>Off-route</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+<script>
+let autoplanItems = [];
+let tripsItems = [];
+let monitorItems = [];
+let decisionFilter = "all";
+
+let isRefreshing = false;
+let autoRefreshTimer = null;
+
+function fmtTs(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return String(ts);
+  return d.toLocaleString();
+}
+
+function fmtNum(v, digits) {
+  if (v === null || v === undefined) return "";
+  const n = Number(v);
+  if (!Number.isFinite(n) || n === 0) return "—";
+  return n.toFixed(digits);
+}
+
+function fmtNumRaw(v, digits) {
+  if (v === null || v === undefined) return "";
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "";
+  return n.toFixed(digits);
+}
+
+async function fetchJson(path) {
+  const res = await fetch(path, {
+    headers: { "Accept-Encoding": "identity", "Connection": "close" }
+  });
+  if (!res.ok) {
+    throw new Error("HTTP " + res.status + " " + res.statusText);
+  }
+  return res.json();
+}
+
+function renderAutoplan() {
+  const tbody = document.querySelector("#autoplanTable tbody");
+  tbody.innerHTML = "";
+
+  const items = autoplanItems.filter(ev => {
+    if (decisionFilter === "all") return true;
+    const d = (ev.decision || "").toLowerCase();
+    if (decisionFilter === "noop") return d === "noop";
+    if (decisionFilter === "confirm") return d === "confirm";
+    if (decisionFilter === "apply") return d === "apply" || d === "accept";
+    return true;
+  });
+
+  items.forEach(ev => {
+    const tr = document.createElement("tr");
+    const decision = (ev.decision || "noop").toLowerCase();
+
+    let tagClass = "tag--noop";
+    if (decision === "confirm") tagClass = "tag--confirm";
+    else if (decision === "apply" || decision === "accept") tagClass = "tag--apply";
+
+    tr.innerHTML = `
+      <td class="nowrap">${fmtTs(ev.ts || ev.created_at)}</td>
+      <td><span class="tag ${tagClass}">${decision}</span></td>
+      <td class="col-wide">${ev.reason || ""}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function renderTrips() {
+  const tbody = document.querySelector("#tripsTable tbody");
+  tbody.innerHTML = "";
+
+  const search = (document.getElementById("filter-search").value || "").trim().toLowerCase();
+  const longhaulOnly = document.getElementById("filter-longhaul").checked;
+
+  let filtered = tripsItems.slice();
+
+  if (search) {
+    filtered = filtered.filter(row => {
+      const o = (row.origin_region || "").toString().toLowerCase();
+      const d = (row.dest_region || "").toString().toLowerCase();
+      return o.includes(search) || d.includes(search);
+    });
+  }
+
+  if (longhaulOnly) {
+    filtered = filtered.filter(row => {
+      const km = Number(row.road_km || 0);
+      return km > 500;
+    });
+  }
+
+  let totalKm = 0;
+
+  filtered.forEach(row => {
+    const tr = document.createElement("tr");
+    const km = row.road_km ?? null;
+    const sec = row.drive_sec ?? null;
+    const price = row.price_rub ?? null;
+    const hours = sec ? sec / 3600 : null;
+    const rpm = (price && km) ? price / km : null;
+    const rph = (price && hours) ? price / hours : null;
+
+    if (km) totalKm += km;
+
+    const o = row.origin_region || "";
+    const d = row.dest_region || "";
+    let rpmRph = "—";
+    if ((rpm && Number(rpm) !== 0) || (rph && Number(rph) !== 0)) {
+      rpmRph = `${fmtNum(rpm, 0)} / ${fmtNum(rph, 0)}`;
+    }
+
+    tr.innerHTML = `
+      <td class="nowrap">${fmtTs(row.confirmed_at || row.created_at)}</td>
+      <td class="col-wide">${o} → ${d}</td>
+      <td class="muted col-num">${fmtNumRaw(km, 1)}</td>
+      <td class="muted col-num">${fmtNumRaw(hours, 1)}</td>
+      <td class="col-num">${rpmRph}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById("trips-count").textContent = String(filtered.length || 0);
+  if (filtered.length > 0 && totalKm > 0) {
+    const avgKm = totalKm / filtered.length;
+    document.getElementById("trips-avg-km").textContent = avgKm.toFixed(0);
+  } else {
+    document.getElementById("trips-avg-km").textContent = "—";
+  }
+}
+
+function applySummaryFromAutoplan() {
+  if (!autoplanItems.length) return;
+
+  const first = autoplanItems[0];
+  const th = first.thresholds || {};
+  const days = th.freights_days_back ?? "";
+  const rpmMin = th.rpm_min ?? "";
+  const rphMin = th.rph_min ?? "";
+  const pAudit = th.p_arrive_min_audit ?? "";
+  const pConfirm = th.p_arrive_min_confirm ?? "";
+  const quantile = th.dynamic_rpm_quantile || "p25";
+  const flowPlan = th.flow_plan || first.flow_plan || "—";
+
+  document.getElementById("metric-flow-plan").textContent = flowPlan;
+  document.getElementById("metric-quantile").textContent = quantile;
+  document.getElementById("metric-days").textContent = days !== "" ? days : "—";
+
+  const summary = `rpm ≥ ${rpmMin || "—"} · rph ≥ ${rphMin || "—"} · P≥ ${pConfirm || pAudit || "—"}`;
+  document.getElementById("summary-thresholds").textContent = summary;
+
+  if (typeof th.confirmed === "number") {
+    document.getElementById("summary-confirmed").textContent = String(th.confirmed);
+  }
+}
+
+function renderMonitor() {
+  const tbody = document.querySelector("#monitorTable tbody");
+  tbody.innerHTML = "";
+
+  if (!monitorItems || monitorItems.length === 0) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 5;
+    td.textContent = "Нет активных off-route алертов";
+    td.className = "muted";
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    document.getElementById("monitor-count").textContent = "0";
+    return;
+  }
+
+  document.getElementById("monitor-count").textContent = String(monitorItems.length);
+
+  monitorItems.forEach(row => {
+    const tr = document.createElement("tr");
+
+    // 1: рейс + статус
+    {
+      const td = document.createElement("td");
+      const idDiv = document.createElement("div");
+      idDiv.textContent = row.trip_id;
+      idDiv.style.fontSize = "11px";
+      idDiv.style.opacity = "0.9";
+      td.appendChild(idDiv);
+
+      if (row.status) {
+        const st = document.createElement("div");
+        st.className = "muted";
+        st.style.fontSize = "11px";
+        st.textContent = row.status;
+        td.appendChild(st);
+      }
+
+      if (row.driver_ack_at) {
+        const ack = document.createElement("div");
+        ack.className = "muted";
+        ack.style.fontSize = "11px";
+        ack.textContent = "ACK: " + fmtTs(row.driver_ack_at);
+        td.appendChild(ack);
+      }
+
+      tr.appendChild(td);
+    }
+
+    // 2: маршрут
+    {
+      const td = document.createElement("td");
+      const main = document.createElement("div");
+      main.textContent = `${row.origin_region || row.loading_region || "?"} → ${row.dest_region || row.unloading_region || "?"}`;
+      td.appendChild(main);
+
+      const sub = document.createElement("div");
+      sub.className = "muted";
+      sub.style.fontSize = "11px";
+      sub.textContent = `${row.loading_region || "?"} → ${row.unloading_region || "?"}`;
+      td.appendChild(sub);
+
+      tr.appendChild(td);
+    }
+
+    // 3: водитель / ТС
+    {
+      const td = document.createElement("td");
+      const name = document.createElement("div");
+      name.textContent = row.driver_name || "(без имени)";
+      td.appendChild(name);
+
+      if (row.driver_phone) {
+        const phone = document.createElement("div");
+        phone.className = "muted";
+        phone.style.fontSize = "11px";
+        phone.textContent = row.driver_phone;
+        td.appendChild(phone);
+      }
+
+      const truck = document.createElement("div");
+      truck.className = "muted";
+      truck.style.fontSize = "11px";
+      truck.textContent = `Truck: ${row.truck_id}`;
+      td.appendChild(truck);
+
+      tr.appendChild(td);
+    }
+
+    // 4: последняя точка
+    {
+      const td = document.createElement("td");
+      if (row.last_ts) {
+        const ts = document.createElement("div");
+        ts.className = "muted";
+        ts.style.fontSize = "11px";
+        ts.textContent = fmtTs(row.last_ts);
+        td.appendChild(ts);
+
+        const coords = document.createElement("div");
+        coords.style.fontSize = "11px";
+        coords.textContent =
+          (row.last_lat != null && row.last_lon != null)
+            ? `${Number(row.last_lat).toFixed(4)}, ${Number(row.last_lon).toFixed(4)}`
+            : "";
+        td.appendChild(coords);
+
+        if (row.speed_kph != null) {
+          const sp = document.createElement("div");
+          sp.className = "muted";
+          sp.style.fontSize = "11px";
+          sp.textContent = `Speed: ${row.speed_kph} км/ч`;
+          td.appendChild(sp);
+        }
+      } else {
+        td.textContent = "нет данных";
+        td.className = "muted";
+      }
+      tr.appendChild(td);
+    }
+
+    // 5: off-route
+    {
+      const td = document.createElement("td");
+      if (row.alert_level) {
+        const lvl = (row.alert_level || "").toLowerCase();
+        let tagClass = "tag--alert-warn";
+        if (lvl === "critical") tagClass = "tag--alert-critical";
+
+        const tag = document.createElement("div");
+        tag.className = "tag " + tagClass;
+        tag.textContent = `${row.alert_type || "off_route"} / ${row.alert_level}`;
+        td.appendChild(tag);
+
+        if (row.detour_factor != null) {
+          const det = document.createElement("div");
+          det.className = "muted";
+          det.style.fontSize = "11px";
+          det.textContent = `detour=${Number(row.detour_factor).toFixed(2)}`;
+          td.appendChild(det);
+        }
+
+        if (row.alert_ts) {
+          const ats = document.createElement("div");
+          ats.className = "muted";
+          ats.style.fontSize = "11px";
+          ats.textContent = fmtTs(row.alert_ts);
+          td.appendChild(ats);
+        }
+      } else {
+        td.textContent = "нет алертов";
+        td.className = "muted";
+      }
+      tr.appendChild(td);
+    }
+
+    document.querySelector("#monitorTable tbody").appendChild(tr);
+  });
+}
+
+function setAutoRefresh(enabled) {
+  if (autoRefreshTimer) {
+    clearInterval(autoRefreshTimer);
+    autoRefreshTimer = null;
+  }
+  if (enabled) {
+    autoRefreshTimer = setInterval(() => {
+      refreshAll();
+    }, 30000);
+  }
+}
+
+async function refreshAll() {
+  if (isRefreshing) return;
+  isRefreshing = true;
+
+  const nowLabel = new Date().toLocaleTimeString();
+  const btn = document.getElementById("btn-refresh");
+  if (btn) btn.disabled = true;
+
+  try {
+    const [autoData, tripsData, monitorData] = await Promise.all([
+      fetchJson("/api/autoplan/pipeline/recent_with_thresholds?limit=50"),
+      fetchJson("/api/trips/recent_clean_strict?limit=50"),
+      fetchJson("/api/dispatcher/trips/monitor?only_with_alerts=true&limit=50")
+    ]);
+
+    autoplanItems = autoData.items || autoData || [];
+    tripsItems = tripsData.items || tripsData || [];
+    monitorItems = monitorData || [];
+
+    renderAutoplan();
+    renderTrips();
+    renderMonitor();
+    applySummaryFromAutoplan();
+
+    const autoCb = document.getElementById("auto-refresh");
+    const suffix = autoCb && autoCb.checked ? " (авто)" : "";
+    document.getElementById("metric-updated").textContent = "Обновление: " + nowLabel + suffix;
+  } catch (e) {
+    console.error(e);
+    alert("Ошибка загрузки данных: " + (e && e.message ? e.message : e));
+  } finally {
+    if (btn) btn.disabled = false;
+    isRefreshing = false;
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  document.querySelectorAll(".chip-toggle-group .chip-toggle").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".chip-toggle-group .chip-toggle").forEach(b => b.classList.remove("chip-toggle--active"));
+      btn.classList.add("chip-toggle--active");
+      decisionFilter = btn.getAttribute("data-decision-filter") || "all";
+      renderAutoplan();
+    });
+  });
+
+  document.getElementById("filter-search").addEventListener("input", () => {
+    renderTrips();
+  });
+  document.getElementById("filter-longhaul").addEventListener("change", () => {
+    renderTrips();
+  });
+
+  const refreshBtn = document.getElementById("btn-refresh");
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", () => {
+      refreshAll();
+    });
+  }
+
+  const autoCb = document.getElementById("auto-refresh");
+  if (autoCb) {
+    autoCb.addEventListener("change", () => {
+      setAutoRefresh(autoCb.checked);
+    });
+    setAutoRefresh(autoCb.checked);
+  }
+
+  refreshAll();
+});
+</script>
+</body>
+</html>

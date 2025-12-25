@@ -136,3 +136,13 @@ celerybeat-schedule
 
 # Глобально разрешаем .gitkeep в любых игнорируемых папках
 !**/.gitkeep
+
+# --- FoxProFlow: local parser artifacts (DO NOT COMMIT) ---
+src/parsers/cars_profile/
+src/parsers/ati_cookies.json
+src/**/*.log
+src/**/*.db
+src/**/*.db-journal
+src/**/*.bak
+src/**/*.pre-fix
+

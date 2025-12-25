@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>FlowWorld Viewer v0.1 — Primorsk Base</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #020617;
+      color: #e5e7eb;
+    }
+    header {
+      padding: 12px 16px;
+      background: #0f172a;
+      border-bottom: 1px solid #1f2937;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+      color: #f9fafb;
+    }
+    header .meta {
+      font-size: 11px;
+      color: #9ca3af;
+    }
+    main {
+      display: flex;
+      height: calc(100vh - 52px);
+    }
+    .column {
+      padding: 12px;
+      box-sizing: border-box;
+    }
+    .col-left {
+      width: 35%;
+      border-right: 1px solid #111827;
+      overflow-y: auto;
+    }
+    .col-right {
+      width: 65%;
+      overflow-y: auto;
+    }
+    h2 {
+      margin: 0 0 8px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #f9fafb;
+    }
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    button {
+      background: #2563eb;
+      border: none;
+      color: white;
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #020617;
+      color: #e5e7eb;
+      border: 1px solid #1f2937;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+    .status {
+      font-size: 11px;
+      margin-left: 8px;
+      color: #9ca3af;
+    }
+    .status .ok {
+      color: #4ade80;
+    }
+    .status .err {
+      color: #f97373;
+    }
+    .list {
+      border-radius: 6px;
+      border: 1px solid #1f2937;
+      background: #020617;
+      overflow: hidden;
+    }
+    .row {
+      padding: 6px 8px;
+      border-bottom: 1px solid #111827;
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .row:last-child {
+      border-bottom: none;
+    }
+    .row:hover {
+      background: #0f172a;
+    }
+    .row.active {
+      background: #1d4ed8;
+    }
+    .row .title {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 230px;
+    }
+    .badge {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: #111827;
+      border: 1px solid #1f2937;
+      color: #9ca3af;
+    }
+    .badge.kind-area {
+      border-color: #22c55e;
+      color: #bbf7d0;
+    }
+    .badge.kind-robot {
+      border-color: #f97316;
+      color: #fed7aa;
+    }
+    .badge.kind-gate {
+      border-color: #38bdf8;
+      color: #bae6fd;
+    }
+    .badge.kind-house {
+      border-color: #facc15;
+      color: #fef3c7;
+    }
+    .section {
+      margin-bottom: 12px;
+      padding: 8px;
+      border-radius: 6px;
+      background: #020617;
+      border: 1px solid #1f2937;
+    }
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: #111827;
+      color: #9ca3af;
+    }
+    .pill .key {
+      color: #6b7280;
+    }
+    .pill .val {
+      color: #e5e7eb;
+    }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 12px;
+    }
+    .json-dump {
+      margin-top: 4px;
+      max-height: 260px;
+      overflow: auto;
+      font-size: 11px;
+      background: #020617;
+      border-radius: 4px;
+      padding: 6px;
+      border: 1px solid #111827;
+    }
+    .objects-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .object-card {
+      border-radius: 6px;
+      border: 1px solid #1f2937;
+      background: #020617;
+      padding: 6px;
+      min-width: 180px;
+      max-width: 240px;
+    }
+    .object-card h3 {
+      margin: 0 0 4px;
+      font-size: 12px;
+      color: #e5e7eb;
+    }
+    .object-card .meta-line {
+      font-size: 11px;
+      color: #9ca3af;
+    }
+    .object-card button {
+      margin-top: 6px;
+      font-size: 11px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      background: #111827;
+      color: #e5e7eb;
+      cursor: pointer;
+    }
+    .object-card button:hover {
+      background: #1d4ed8;
+      border-color: #1d4ed8;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>FlowWorld Viewer v0.1 — Primorsk Base</h1>
+    <div class="meta">
+      API: <span>/api/flowworld/state</span> · Links: <span>/api/flowworld/trip-links</span>
+    </div>
+  </header>
+  <main>
+    <section class="column col-left">
+      <h2>Пространства</h2>
+      <div class="toolbar">
+        <button onclick="loadState()">Загрузить</button>
+        <span class="status" id="status-text"></span>
+      </div>
+      <div class="list" id="spaces-list"></div>
+    </section>
+
+    <section class="column col-right">
+      <h2>Детали пространства</h2>
+
+      <div class="section" id="section-space">
+        <div class="section-header">
+          <span>Space</span>
+          <div id="space-meta-pills"></div>
+        </div>
+        <div id="space-desc" style="font-size:12px;color:#e5e7eb;"></div>
+        <div class="json-dump mono" id="space-json" style="margin-top:6px;"></div>
+      </div>
+
+      <div class="section" id="section-objects">
+        <div class="section-header">
+          <span>Объекты</span>
+          <div id="objects-meta-pills"></div>
+        </div>
+        <div id="objects-empty" style="font-size:12px;color:#9ca3af;">Объекты ещё не загружены.</div>
+        <div class="objects-list" id="objects-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    let worldState = null;
+    let tripLinks = [];
+    let currentSpaceCode = null;
+
+    function setStatus(msg, isError = false) {
+      const el = document.getElementById('status-text');
+      if (!msg) {
+        el.textContent = '';
+        return;
+      }
+      el.innerHTML = isError
+        ? `<span class="err">Ошибка:</span> ${msg}`
+        : `<span class="ok">OK:</span> ${msg}`;
+    }
+
+    async function loadState() {
+      setStatus('Загружаю состояние FlowWorld…');
+      try {
+        const res = await fetch('/api/flowworld/state', { method: 'GET' });
+        if (!res.ok) {
+          const txt = await res.text();
+          setStatus(`Ошибка /api/flowworld/state: ${res.status} ${txt}`, true);
+          return;
+        }
+        const data = await res.json();
+        worldState = data;
+
+        // Подтягиваем trip-links
+        await loadTripLinks();
+
+        renderSpaces();
+        setStatus('Состояние FlowWorld загружено');
+      } catch (err) {
+        console.error(err);
+        setStatus(`Ошибка при запросе FlowWorld: ${err}`, true);
+      }
+    }
+
+    async function loadTripLinks() {
+      try {
+        const res = await fetch('/api/flowworld/trip-links', { method: 'GET' });
+        if (!res.ok) {
+          const txt = await res.text();
+          console.warn('Ошибка /api/flowworld/trip-links:', res.status, txt);
+          tripLinks = [];
+          return;
+        }
+        const data = await res.json();
+        tripLinks = Array.isArray(data) ? data : [];
+      } catch (err) {
+        console.warn('Ошибка при запросе trip-links:', err);
+        tripLinks = [];
+      }
+    }
+
+    function renderSpaces() {
+      const listEl = document.getElementById('spaces-list');
+      listEl.innerHTML = '';
+
+      const spaces = (worldState && worldState.spaces) ? worldState.spaces : [];
+      if (!spaces.length) {
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.textContent = 'Нет пространств (world.spaces пуст).';
+        listEl.appendChild(row);
+        renderSpaceDetails(null);
+        return;
+      }
+
+      spaces.forEach(space => {
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.dataset.code = space.code;
+
+        const title = document.createElement('div');
+        title.className = 'title';
+        title.textContent = space.name;
+
+        const badge = document.createElement('span');
+        badge.className = 'badge';
+        badge.innerText = space.code;
+
+        row.appendChild(title);
+        row.appendChild(badge);
+        row.onclick = () => {
+          currentSpaceCode = space.code;
+          document.querySelectorAll('.row').forEach(r => r.classList.remove('active'));
+          row.classList.add('active');
+          renderSpaceDetails(space);
+        };
+
+        listEl.appendChild(row);
+      });
+
+      currentSpaceCode = spaces[0].code;
+      listEl.firstChild.classList.add('active');
+      renderSpaceDetails(spaces[0]);
+    }
+
+    function renderSpaceDetails(space) {
+      const descEl = document.getElementById('space-desc');
+      const jsonEl = document.getElementById('space-json');
+      const metaPills = document.getElementById('space-meta-pills');
+      const objectsListEl = document.getElementById('objects-list');
+      const objectsEmptyEl = document.getElementById('objects-empty');
+      const objectsMetaPills = document.getElementById('objects-meta-pills');
+
+      if (!space) {
+        descEl.textContent = 'Пространство не выбрано.';
+        jsonEl.textContent = '';
+        metaPills.innerHTML = '';
+        objectsMetaPills.innerHTML = '';
+        objectsListEl.innerHTML = '';
+        objectsEmptyEl.style.display = 'block';
+        return;
+      }
+
+      descEl.textContent = space.description || 'Без описания.';
+      metaPills.innerHTML = `
+        <span class="pill"><span class="key">id:</span> <span class="val">${space.id}</span></span>
+        <span class="pill"><span class="key">code:</span> <span class="val">${space.code}</span></span>
+      `;
+      jsonEl.textContent = JSON.stringify(space.meta || {}, null, 2);
+
+      const allObjects = (worldState && worldState.objects) ? worldState.objects : [];
+      const objects = allObjects.filter(o => o.space_id === space.id);
+
+      const linksForSpace = tripLinks.filter(l => l.space_id === space.id);
+
+      if (!objects.length) {
+        objectsListEl.innerHTML = '';
+        objectsEmptyEl.style.display = 'block';
+        objectsMetaPills.innerHTML = `
+          <span class="pill"><span class="key">count:</span> <span class="val">0</span></span>
+          <span class="pill"><span class="key">links:</span> <span class="val">${linksForSpace.length}</span></span>
+        `;
+        return;
+      }
+
+      objectsEmptyEl.style.display = 'none';
+      objectsListEl.innerHTML = '';
+      objectsMetaPills.innerHTML = `
+        <span class="pill"><span class="key">count:</span> <span class="val">${objects.length}</span></span>
+        <span class="pill"><span class="key">links:</span> <span class="val">${linksForSpace.length}</span></span>
+      `;
+
+      objects.forEach(obj => {
+        const card = document.createElement('div');
+        card.className = 'object-card';
+
+        const h3 = document.createElement('h3');
+        h3.textContent = obj.name;
+
+        const metaLine1 = document.createElement('div');
+        metaLine1.className = 'meta-line';
+        metaLine1.innerHTML = `<span style="color:#6b7280;">code:</span> ${obj.code}`;
+
+        const metaLine2 = document.createElement('div');
+        metaLine2.className = 'meta-line';
+        metaLine2.innerHTML = `<span style="color:#6b7280;">kind:</span> ${obj.kind}`;
+
+        const linksForObject = tripLinks.filter(
+          l => l.space_id === space.id && l.object_id === obj.id
+        );
+        const metaLine3 = document.createElement('div');
+        metaLine3.className = 'meta-line';
+        if (linksForObject.length) {
+          const repr = linksForObject
+            .map(l => `${l.entity_type}#${l.entity_id} (${l.relation})`)
+            .join(', ');
+          metaLine3.innerHTML =
+            `<span style="color:#6b7280;">links:</span> ${repr}`;
+        } else {
+          metaLine3.innerHTML =
+            `<span style="color:#6b7280;">links:</span> –`;
+        }
+
+        const badge = document.createElement('span');
+        badge.className = 'badge';
+        if (obj.kind.startsWith('area.')) {
+          badge.classList.add('kind-area');
+        } else if (obj.kind.startsWith('robot.')) {
+          badge.classList.add('kind-robot');
+        } else if (obj.kind.startsWith('infrastructure.')) {
+          badge.classList.add('kind-gate');
+        } else if (obj.kind.startsWith('building.')) {
+          badge.classList.add('kind-house');
+        }
+        badge.textContent = obj.kind;
+
+        const metaDump = document.createElement('div');
+        metaDump.className = 'json-dump mono';
+        metaDump.style.maxHeight = '120px';
+        metaDump.textContent = JSON.stringify(obj.meta || {}, null, 2);
+
+        const btn = document.createElement('button');
+        btn.textContent = 'Dev-задача по объекту';
+        btn.onclick = () => createDevTaskForObject(space, obj, linksForObject);
+
+        card.appendChild(h3);
+        card.appendChild(metaLine1);
+        card.appendChild(metaLine2);
+        card.appendChild(metaLine3);
+        card.appendChild(badge);
+        card.appendChild(metaDump);
+        card.appendChild(btn);
+
+        objectsListEl.appendChild(card);
+      });
+    }
+
+    async function createDevTaskForObject(space, obj, linksForObject) {
+      const linksSummary = (linksForObject && linksForObject.length)
+        ? linksForObject.map(l => `${l.entity_type}#${l.entity_id} (${l.relation})`).join(', ')
+        : 'нет прямых связей';
+
+      const defaultText =
+`Нужно создать задачу DevFactory по объекту ${obj.code || obj.name} в пространстве ${space.code || space.name}.
+
+Контекст:
+- Пространство: ${space.code} — ${space.name}
+- Объект: ${obj.code || '(без кода)'} — ${obj.name}, kind=${obj.kind}
+- Связанные сущности: ${linksSummary}
+
+Опиши здесь, что конкретно нужно сделать (изменение кода, SQL, инфраструктура, UI и т.д.):`;
+
+      const userText = window.prompt('Формулировка задачи для DevFactory:', defaultText);
+      if (!userText) {
+        return;
+      }
+
+      setStatus('Создаю DevFactory-задачу…');
+
+      const payload = {
+        raw_text: userText,
+        project_ref: 'foxproflow-core',
+        stack: 'python_backend',
+        source: 'flowworld_viewer',
+        language: 'ru',
+        channel: 'web',
+        hints: {
+          stack: ['python', 'sql'],
+          area: ['flowworld', 'devfactory', 'logistics'],
+        },
+      };
+
+      try {
+        const res = await fetch('/api/devfactory/tasks/intent', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Subject-Type': 'user',
+            'X-Subject-Id': 'e.yatskov@foxproflow.ru',
+          },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          setStatus(`Ошибка создания DevTask: ${res.status} ${text}`, true);
+          return;
+        }
+        const task = await res.json();
+        const id = task.id || '?';
+        const publicId = task.public_id || '(нет public_id)';
+        setStatus(`Создана DevFactory-задача id=${id}, public_id=${publicId}`);
+        alert(`DevFactory-задача создана.\n\nid=${id}\npublic_id=${publicId}`);
+      } catch (err) {
+        console.error(err);
+        setStatus(`Ошибка при создании DevTask: ${err}`, true);
+      }
+    }
+
+    // Автозагрузка при старте страницы
+    window.addEventListener('load', () => {
+      loadState();
+    });
+  </script>
+</body>
+</html>

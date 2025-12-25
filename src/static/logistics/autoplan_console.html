@@ -1,0 +1,1570 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>FoxProFlow • Autoplan Console</title>
+
+  <style>
+    :root {
+      /* FoxProFlow UI Tokens (dark-tech + fox accent) */
+      --bg-main: #050814;
+      --bg-deep: #02040a;
+
+      --panel-a: rgba(15, 22, 36, 0.92);
+      --panel-b: rgba(21, 29, 48, 0.70);
+
+      --accent: #ff7b3a;
+      --accent-2: #ffb07a;
+      --accent-soft: rgba(255, 123, 58, 0.16);
+      --accent-line: rgba(255, 123, 58, 0.42);
+
+      --border: rgba(42, 51, 80, 0.95);
+      --border-soft: rgba(42, 51, 80, 0.70);
+
+      --text: #ffffff;
+      --text-muted: #a0a8c0;
+      --text-soft: #7f88a5;
+
+      --danger: #ff5c5c;
+      --success: #2ecc71;
+      --warning: #f1c40f;
+
+      --radius-lg: 18px;
+      --radius-md: 14px;
+      --radius-sm: 12px;
+
+      --shadow-soft: 0 18px 55px rgba(0, 0, 0, 0.58);
+      --shadow-subtle: 0 14px 34px rgba(0, 0, 0, 0.45);
+
+      --t-fast: 160ms cubic-bezier(.2,.8,.2,1);
+      --t-med: 240ms cubic-bezier(.2,.8,.2,1);
+
+      --font-main: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-mono: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+
+    body {
+      margin: 0;
+      font-family: var(--font-main);
+      color: var(--text);
+      min-height: 100vh;
+
+      /* BrandBook-ish deep tech gradient */
+      background:
+        radial-gradient(1200px 700px at 16% -10%, rgba(255, 123, 58, 0.22), transparent 55%),
+        radial-gradient(900px 600px at 82% 0%, rgba(120, 160, 255, 0.18), transparent 55%),
+        radial-gradient(800px 600px at 60% 120%, rgba(255, 123, 58, 0.14), transparent 60%),
+        linear-gradient(180deg, #0b1230 0%, var(--bg-main) 45%, var(--bg-deep) 100%);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+    }
+
+    .shell {
+      max-width: 1320px;
+      margin: 18px auto 32px auto;
+      padding: 0 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* --- Gradient-border panel helper (reliable, no masks) --- */
+    .panel {
+      border: 1px solid transparent;
+      border-radius: var(--radius-lg);
+      background:
+        linear-gradient(180deg, var(--panel-b), var(--panel-a)) padding-box,
+        linear-gradient(135deg, rgba(255, 123, 58, 0.42), rgba(42, 51, 80, 0.95), rgba(120, 160, 255, 0.18)) border-box;
+      box-shadow: var(--shadow-subtle);
+      position: relative;
+      overflow: hidden;
+    }
+    .panel::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: radial-gradient(600px 220px at 20% 0%, rgba(255, 123, 58, 0.10), transparent 60%);
+      opacity: 0.9;
+    }
+
+    /* --- Header --- */
+    header.ff-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 18px;
+      border-radius: var(--radius-lg);
+      border: 1px solid transparent;
+      background:
+        linear-gradient(115deg, rgba(255, 123, 58, 0.18), rgba(10, 16, 35, 0.92)) padding-box,
+        linear-gradient(135deg, rgba(255, 123, 58, 0.62), rgba(42, 51, 80, 0.95), rgba(120, 160, 255, 0.18)) border-box;
+      box-shadow: var(--shadow-soft);
+      backdrop-filter: blur(18px);
+      position: relative;
+      overflow: hidden;
+    }
+    header.ff-header::before {
+      content: "";
+      position: absolute;
+      inset: -2px;
+      pointer-events: none;
+      background: radial-gradient(420px 180px at 30% 20%, rgba(255, 123, 58, 0.16), transparent 60%);
+      opacity: 1;
+    }
+
+    .ff-header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      position: relative;
+      z-index: 1;
+    }
+
+    .ff-logo {
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      background:
+        radial-gradient(circle at 30% 30%, rgba(255,255,255,0.95), rgba(255, 123, 58, 0.95) 42%, rgba(5, 8, 20, 1) 100%);
+      box-shadow: 0 12px 30px rgba(255, 123, 58, 0.22);
+      flex: 0 0 auto;
+    }
+
+    .ff-titlebox { min-width: 0; }
+    .ff-title {
+      font-size: 16px;
+      font-weight: 900;
+      letter-spacing: 0.01em;
+      margin: 0;
+      line-height: 1.1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .ff-subtitle {
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--text-muted);
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .route {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      border: 1px solid var(--border-soft);
+      background: rgba(10, 16, 35, 0.55);
+      padding: 4px 8px;
+      border-radius: 999px;
+      transition: border-color var(--t-fast), background var(--t-fast), transform var(--t-fast);
+    }
+    .route:hover {
+      border-color: rgba(255, 123, 58, 0.35);
+      background: rgba(10, 16, 35, 0.68);
+      transform: translateY(-1px);
+    }
+
+    .ff-header-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      position: relative;
+      z-index: 1;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border-soft);
+      background: rgba(10, 16, 35, 0.55);
+      color: var(--text-muted);
+      font-size: 12px;
+      white-space: nowrap;
+      transition: border-color var(--t-fast), background var(--t-fast);
+    }
+    .badge:hover {
+      border-color: rgba(255, 123, 58, 0.26);
+      background: rgba(10, 16, 35, 0.68);
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.45);
+      box-shadow: 0 0 0 3px rgba(255,255,255,0.06);
+    }
+    .dot.ok { background: var(--success); box-shadow: 0 0 0 3px rgba(46, 204, 113, 0.12); }
+    .dot.err { background: var(--danger); box-shadow: 0 0 0 3px rgba(255, 92, 92, 0.12); }
+    .dot.wait { background: var(--warning); box-shadow: 0 0 0 3px rgba(241, 196, 15, 0.12); }
+
+    /* --- Toolbar --- */
+    .toolbar {
+      padding: 12px;
+      display: grid;
+      grid-template-columns: 1.1fr 1fr auto;
+      gap: 12px;
+      align-items: end;
+    }
+    @media (max-width: 980px) {
+      .toolbar { grid-template-columns: 1fr; }
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: end;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 180px;
+      flex: 0 1 auto;
+    }
+
+    label {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    input[type="date"],
+    input[type="text"],
+    select {
+      appearance: none;
+      background: rgba(5, 8, 20, 0.52);
+      color: var(--text);
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius-md);
+      padding: 10px 12px;
+      outline: none;
+      min-height: 40px;
+      transition: border-color var(--t-fast), box-shadow var(--t-fast), background var(--t-fast), transform var(--t-fast);
+    }
+
+    input[type="date"]:hover,
+    input[type="text"]:hover,
+    select:hover {
+      border-color: rgba(255, 123, 58, 0.30);
+    }
+    input[type="date"]:focus,
+    input[type="text"]:focus,
+    select:focus {
+      border-color: rgba(255, 123, 58, 0.60);
+      box-shadow: 0 0 0 4px rgba(255, 123, 58, 0.12);
+      background: rgba(5, 8, 20, 0.68);
+      transform: translateY(-1px);
+    }
+
+    .inputWrap {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    .inputIcon {
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 16px;
+      height: 16px;
+      opacity: 0.65;
+      pointer-events: none;
+    }
+    .inputWrap input[type="text"] { padding-left: 36px; padding-right: 40px; }
+    .clearBtn {
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 28px;
+      height: 28px;
+      border-radius: 10px;
+      border: 1px solid rgba(42, 51, 80, 0.55);
+      background: rgba(10, 16, 35, 0.35);
+      color: var(--text-muted);
+      cursor: pointer;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      transition: border-color var(--t-fast), background var(--t-fast), transform var(--t-fast);
+      padding: 0;
+    }
+    .clearBtn:hover {
+      border-color: rgba(255, 123, 58, 0.30);
+      background: rgba(10, 16, 35, 0.60);
+      transform: translateY(-50%) scale(1.02);
+    }
+
+    .toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border-soft);
+      background: rgba(10, 16, 35, 0.35);
+      color: var(--text-muted);
+      font-size: 12px;
+      user-select: none;
+      min-height: 40px;
+      transition: border-color var(--t-fast), background var(--t-fast);
+    }
+    .toggle:hover {
+      border-color: rgba(255, 123, 58, 0.25);
+      background: rgba(10, 16, 35, 0.55);
+    }
+    .toggle input {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+    }
+
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    button {
+      border: 1px solid var(--border-soft);
+      border-radius: 12px;
+      padding: 10px 14px;
+      background: rgba(10, 16, 35, 0.55);
+      color: var(--text);
+      cursor: pointer;
+      transition: transform var(--t-fast), border-color var(--t-fast), background var(--t-fast), filter var(--t-fast), box-shadow var(--t-fast);
+      min-height: 40px;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      position: relative;
+      overflow: hidden;
+    }
+    button svg { width: 16px; height: 16px; opacity: 0.9; }
+
+    button:hover {
+      border-color: rgba(255, 123, 58, 0.30);
+      box-shadow: 0 10px 22px rgba(0,0,0,0.25);
+      transform: translateY(-1px);
+    }
+    button:active { transform: translateY(0px); }
+    button:focus { outline: none; box-shadow: 0 0 0 4px rgba(255, 123, 58, 0.12); }
+
+    .btn-primary {
+      background:
+        linear-gradient(180deg, rgba(255, 123, 58, 0.98), rgba(255, 123, 58, 0.72));
+      border-color: rgba(255, 123, 58, 0.65);
+      color: #0b0f14;
+      font-weight: 900;
+      letter-spacing: 0.01em;
+    }
+    /* subtle shine on hover */
+    .btn-primary::before {
+      content: "";
+      position: absolute;
+      inset: -2px;
+      background: linear-gradient(115deg, rgba(255,255,255,0.30), rgba(255,255,255,0) 45%);
+      transform: translateX(-120%);
+      transition: transform var(--t-med);
+      opacity: 0.65;
+      pointer-events: none;
+    }
+    .btn-primary:hover::before { transform: translateX(120%); }
+
+    .btn-ghost { background: rgba(10, 16, 35, 0.35); }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.72;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .spinner {
+      width: 14px;
+      height: 14px;
+      border-radius: 999px;
+      border: 2px solid rgba(11, 15, 20, 0.25);
+      border-top-color: rgba(11, 15, 20, 0.85);
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .metaPill {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border-soft);
+      background: rgba(5, 8, 20, 0.45);
+      white-space: nowrap;
+      transition: border-color var(--t-fast), background var(--t-fast);
+    }
+    .metaPill:hover {
+      border-color: rgba(255, 123, 58, 0.25);
+      background: rgba(5, 8, 20, 0.62);
+    }
+
+    /* Status bar */
+    .statusbar {
+      padding: 10px 12px;
+      border-radius: 14px;
+      border: 1px solid var(--border-soft);
+      background: rgba(10, 16, 35, 0.35);
+      color: var(--text-muted);
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      transition: border-color var(--t-fast), background var(--t-fast);
+    }
+    .statusbar.ok {
+      border-color: rgba(46, 204, 113, 0.35);
+      background: rgba(46, 204, 113, 0.08);
+      color: #b7f7c0;
+    }
+    .statusbar.err {
+      border-color: rgba(255, 92, 92, 0.35);
+      background: rgba(255, 92, 92, 0.08);
+      color: #ffb4b4;
+    }
+
+    /* KPI chips */
+    .kpiRow {
+      padding: 10px 12px;
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+    }
+    @media (max-width: 980px) { .kpiRow { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+    .chip {
+      border-radius: 14px;
+      border: 1px solid var(--border-soft);
+      background: rgba(10, 16, 35, 0.35);
+      padding: 10px 12px;
+      min-height: 58px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 6px;
+      transition: border-color var(--t-fast), background var(--t-fast), transform var(--t-fast);
+    }
+    .chip:hover {
+      border-color: rgba(255, 123, 58, 0.22);
+      background: rgba(10, 16, 35, 0.52);
+      transform: translateY(-1px);
+    }
+    .chip .k { font-size: 11px; color: var(--text-soft); }
+    .chip .v { font-size: 16px; font-weight: 900; letter-spacing: 0.01em; }
+    .chip .v.mono { font-family: var(--font-mono); font-size: 14px; }
+
+    .chip.warn { border-color: rgba(241, 196, 15, 0.30); }
+    .chip.ok { border-color: rgba(46, 204, 113, 0.30); }
+    .chip.accent {
+      border-color: rgba(255, 123, 58, 0.35);
+      background: rgba(255, 123, 58, 0.06);
+    }
+
+    /* Main grid */
+    main.grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+    @media (min-width: 1060px) {
+      main.grid { grid-template-columns: 1fr 420px; }
+    }
+
+    .section { padding: 14px; }
+    .section h2 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      letter-spacing: 0.02em;
+      color: var(--text);
+    }
+    .hint {
+      margin: 0 0 12px;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    /* Summary */
+    .kv {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      font-size: 12px;
+    }
+    .kvRow {
+      display: grid;
+      grid-template-columns: 160px 1fr;
+      gap: 10px;
+      align-items: start;
+      padding: 8px 10px;
+      border-radius: 12px;
+      border: 1px solid rgba(42, 51, 80, 0.70);
+      background: rgba(5, 8, 20, 0.35);
+      transition: border-color var(--t-fast), background var(--t-fast);
+    }
+    .kvRow:hover {
+      border-color: rgba(255, 123, 58, 0.22);
+      background: rgba(5, 8, 20, 0.50);
+    }
+    .kvRow .k { color: var(--text-muted); }
+    .kvRow .v {
+      color: var(--text);
+      font-weight: 800;
+      word-break: break-word;
+      text-align: right;
+    }
+    .mono { font-family: var(--font-mono); }
+
+    .copyLink {
+      font-family: var(--font-mono);
+      border: 1px solid rgba(42, 51, 80, 0.70);
+      background: rgba(5, 8, 20, 0.25);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 6px 10px;
+      cursor: pointer;
+      transition: border-color var(--t-fast), background var(--t-fast), transform var(--t-fast);
+      text-align: right;
+      width: 100%;
+    }
+    .copyLink:hover {
+      border-color: rgba(255, 123, 58, 0.35);
+      background: rgba(5, 8, 20, 0.42);
+      transform: translateY(-1px);
+    }
+    .copyLink:focus { outline: none; box-shadow: 0 0 0 4px rgba(255, 123, 58, 0.12); }
+
+    /* Table */
+    .tableTop {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .tableMeta { color: var(--text-muted); font-size: 12px; }
+
+    .tableWrap {
+      overflow: auto;
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border-soft);
+      background: rgba(5, 8, 20, 0.28);
+      max-height: 560px;
+    }
+
+    /* nicer scrollbar */
+    .tableWrap::-webkit-scrollbar { height: 10px; width: 10px; }
+    .tableWrap::-webkit-scrollbar-thumb {
+      background: rgba(42, 51, 80, 0.80);
+      border-radius: 999px;
+      border: 2px solid rgba(5, 8, 20, 0.55);
+    }
+    .tableWrap::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 123, 58, 0.35);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      min-width: 940px;
+      font-size: 12px;
+    }
+    thead th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      text-align: left;
+      padding: 12px 12px;
+      color: var(--text-muted);
+      font-weight: 900;
+      letter-spacing: 0.02em;
+      background:
+        linear-gradient(180deg, rgba(15, 22, 36, 0.98), rgba(15, 22, 36, 0.92));
+      border-bottom: 1px solid var(--border-soft);
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+      transition: color var(--t-fast);
+    }
+    thead th:hover { color: rgba(255, 255, 255, 0.92); }
+
+    thead th .sort {
+      margin-left: 8px;
+      opacity: 0.75;
+      font-size: 11px;
+      font-family: var(--font-mono);
+    }
+
+    tbody td {
+      padding: 11px 12px;
+      border-bottom: 1px solid rgba(42, 51, 80, 0.60);
+      vertical-align: top;
+      color: var(--text);
+      transition: background var(--t-fast);
+    }
+    tbody tr:nth-child(2n) td { background: rgba(10, 16, 35, 0.14); }
+    tbody tr:hover td { background: rgba(255, 123, 58, 0.06); }
+
+    .vehPill {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(42, 51, 80, 0.90);
+      background: rgba(10, 16, 35, 0.35);
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .cellId { min-width: 260px; }
+    .cellId button { text-align: left; }
+    .right { text-align: right; }
+
+    /* Raw JSON */
+    details.raw { padding: 14px; }
+    summary {
+      cursor: pointer;
+      color: var(--text-muted);
+      font-size: 12px;
+      user-select: none;
+    }
+    pre {
+      margin: 12px 0 0;
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid var(--border-soft);
+      background: rgba(5, 8, 20, 0.55);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text);
+      overflow: auto;
+      max-height: 520px;
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      min-width: 240px;
+      max-width: 380px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      border: 1px solid var(--border-soft);
+      background: rgba(10, 16, 35, 0.88);
+      color: var(--text-muted);
+      box-shadow: var(--shadow-subtle);
+      opacity: 0;
+      transform: translateY(6px);
+      pointer-events: none;
+      transition: opacity var(--t-med), transform var(--t-med);
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    footer.ff-footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--text-soft);
+      font-size: 11px;
+      padding: 2px 2px;
+    }
+    footer code { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); }
+  </style>
+</head>
+
+<body>
+  <div class="shell">
+
+    <header class="ff-header">
+      <div class="ff-header-left">
+        <div class="ff-logo" aria-hidden="true"></div>
+        <div class="ff-titlebox">
+          <div class="ff-title">FoxProFlow • Autoplan Console</div>
+          <div class="ff-subtitle">
+            <span class="route">GET /api/trips/autoplan/latest</span>
+            <span class="route">POST /api/trips/plan</span>
+            <span>read-only latest + run plan</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="ff-header-right">
+        <div class="badge" title="Состояние">
+          <span class="dot" id="dotState"></span>
+          <span id="badgeState">ready</span>
+        </div>
+        <div class="badge" title="Engine">
+          <span>engine:</span>
+          <span class="mono" id="badgeEngine">—</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Toolbar -->
+    <section class="panel toolbar" aria-label="Панель управления автопланом">
+      <div class="controls">
+        <div class="field">
+          <label for="dateInput">Дата</label>
+          <input id="dateInput" type="date" />
+        </div>
+
+        <div class="field">
+          <label for="windowSelect">Окно</label>
+          <select id="windowSelect">
+            <option value="day">day</option>
+            <option value="rolling24">rolling24</option>
+            <option value="rolling48">rolling48</option>
+          </select>
+        </div>
+
+        <div class="field" style="min-width: 260px;">
+          <label for="filterInput">Фильтр (vehicle / load_id)</label>
+          <div class="inputWrap">
+            <svg class="inputIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" stroke="currentColor" opacity="0.8" stroke-width="2"/>
+              <path d="M16.2 16.2 21 21" stroke="currentColor" opacity="0.8" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <input id="filterInput" type="text" placeholder="TRUCK-001 или 0af0…" />
+            <button id="clearFilterBtn" class="clearBtn" type="button" title="Очистить фильтр">×</button>
+          </div>
+        </div>
+
+        <label class="toggle" title="Показывать только строки с start_delay_min > 0">
+          <input id="onlyDelayed" type="checkbox" />
+          Только задержки
+        </label>
+      </div>
+
+      <div class="actions">
+        <div id="metaPill" class="metaPill" aria-live="polite">src=— • mode=— • window=— • ok=—</div>
+
+        <!-- Load latest (read-only) -->
+        <button id="latestBtn" class="btn-ghost" type="button" title="Загрузить последний прогон (read-only)">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M20 12a8 8 0 1 1-2.34-5.66" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M20 4v6h-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span id="latestBtnText">Load latest</span>
+          <span id="latestSpinner" class="spinner" style="display:none;" aria-hidden="true"></span>
+        </button>
+
+        <!-- Plan (creates new run) -->
+        <button id="planBtn" class="btn-primary" type="button" title="Запустить новый прогон автоплана">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M13 2 3 14h8l-1 8 11-14h-8l0-6Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+          </svg>
+          <span id="planBtnText">Plan</span>
+          <span id="planSpinner" class="spinner" style="display:none;" aria-hidden="true"></span>
+        </button>
+
+        <button id="copyJsonBtn" class="btn-ghost" type="button" title="Скопировать Raw JSON">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M9 9h10v12H9V9Z" stroke="currentColor" stroke-width="2"/>
+            <path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          Copy JSON
+        </button>
+      </div>
+
+      <div id="statusbar" class="statusbar" style="grid-column: 1 / -1;">
+        <span id="statusText">Готов. “Load latest” — без побочных эффектов. “Plan” — создаёт новый run.</span>
+        <span class="metaPill mono" id="statusMeta">—</span>
+      </div>
+    </section>
+
+    <!-- KPI -->
+    <section class="panel kpiRow" aria-label="KPI автоплана">
+      <div class="chip accent">
+        <div class="k">loads_considered</div>
+        <div class="v" id="kpiLoads">—</div>
+      </div>
+      <div class="chip">
+        <div class="k">vehicles_count</div>
+        <div class="v" id="kpiVehicles">—</div>
+      </div>
+      <div class="chip">
+        <div class="k">assignments_count</div>
+        <div class="v" id="kpiAssignments">—</div>
+      </div>
+      <div class="chip warn">
+        <div class="k">delayed_assignments</div>
+        <div class="v" id="kpiDelayed">—</div>
+      </div>
+      <div class="chip">
+        <div class="k">avg_start_delay_min</div>
+        <div class="v" id="kpiAvg">—</div>
+      </div>
+      <div class="chip ok">
+        <div class="k">virtual_vehicles_used</div>
+        <div class="v mono" id="kpiVirtual">—</div>
+      </div>
+    </section>
+
+    <!-- Result -->
+    <main class="grid" aria-label="Результат автоплана">
+      <!-- Dominant center: table -->
+      <section class="panel section" aria-label="Назначения">
+        <div class="tableTop">
+          <div>
+            <h2>Assignments</h2>
+            <p class="hint">Клик по <span class="mono">load_id</span> или <span class="mono">run_id</span> копирует значение. Горячие клавиши: <span class="mono">L</span> (latest), <span class="mono">P</span> (plan), <span class="mono">/</span> (filter).</p>
+          </div>
+          <div class="tableMeta" id="tableMeta">rows: —</div>
+        </div>
+
+        <div class="tableWrap">
+          <table>
+            <thead>
+              <tr>
+                <th data-sort="vehicle_code">vehicle <span class="sort" id="s_vehicle_code">—</span></th>
+                <th data-sort="seq">seq <span class="sort" id="s_seq">—</span></th>
+                <th data-sort="load_id">load_id <span class="sort" id="s_load_id">—</span></th>
+                <th data-sort="pickup_planned_at">pickup <span class="sort" id="s_pickup_planned_at">—</span></th>
+                <th data-sort="delivery_planned_at">delivery <span class="sort" id="s_delivery_planned_at">—</span></th>
+                <th data-sort="start_delay_min" class="right">delay_min <span class="sort" id="s_start_delay_min">—</span></th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Side panel: summary -->
+      <section class="panel section" aria-label="Summary">
+        <h2>Summary</h2>
+        <div class="kv">
+          <div class="kvRow">
+            <div class="k">run_id</div>
+            <div class="v">
+              <button id="runId" class="copyLink mono" type="button" data-copy="" title="Нажми, чтобы скопировать">—</button>
+            </div>
+          </div>
+
+          <div class="kvRow">
+            <div class="k">created_at</div>
+            <div class="v mono" id="createdAt">—</div>
+          </div>
+
+          <div class="kvRow">
+            <div class="k">engine</div>
+            <div class="v mono" id="engine">—</div>
+          </div>
+
+          <div class="kvRow">
+            <div class="k">window_start</div>
+            <div class="v mono" id="ws">—</div>
+          </div>
+
+          <div class="kvRow">
+            <div class="k">window_end</div>
+            <div class="v mono" id="we">—</div>
+          </div>
+
+          <div class="kvRow">
+            <div class="k">loads_considered</div>
+            <div class="v" id="lc">—</div>
+          </div>
+
+          <div class="kvRow">
+            <div class="k">vehicles_count</div>
+            <div class="v" id="vc">—</div>
+          </div>
+
+          <div class="kvRow">
+            <div class="k">assignments_count</div>
+            <div class="v" id="ac">—</div>
+          </div>
+
+          <div class="kvRow">
+            <div class="k">delayed_assignments</div>
+            <div class="v" id="da">—</div>
+          </div>
+
+          <div class="kvRow">
+            <div class="k">avg_start_delay_min</div>
+            <div class="v" id="avg">—</div>
+          </div>
+
+          <div class="kvRow">
+            <div class="k">virtual_vehicles_used</div>
+            <div class="v mono" id="virt">—</div>
+          </div>
+        </div>
+      </section>
+          <!-- DevTask 121: Runs history (read-only) -->
+      <section class="panel" aria-label="Runs history">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px;">
+          <div class="ff-title" style="font-size:14px; opacity:.9;">Runs history</div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span class="mono" id="runsMeta" style="opacity:.75;">—</span>
+            <button class="btn" id="runsBtn" type="button">
+              <span id="runsBtnText">Load runs</span>
+              <span id="runsSpinner" class="spinner" style="display:none;"></span>
+            </button>
+          </div>
+        </div>
+        <div id="runsList"
+             style="display:flex; flex-direction:column; gap:8px; max-height:220px; overflow:auto; padding-right:4px;">
+          <div style="opacity:.65;">Нажми “Load runs”, затем клик по run_id загрузит выбранный прогон (read-only).</div>
+        </div>
+        <div class="hint" style="margin-top:10px;">
+          Клик по <span class="mono">run_id</span> → Load run. <span class="mono">Shift+клик</span> → копировать run_id.
+        </div>
+      </section>
+
+    </main>
+
+    <details class="panel raw" aria-label="Raw JSON">
+      <summary>Raw JSON</summary>
+      <pre id="raw">{}</pre>
+    </details>
+
+    <footer class="ff-footer">
+      <span>FoxProFlow • Autoplan Operator Console</span>
+      <span><code>autorun=1 → Load latest • run_id=... → Load run (read-only)</code></span>
+    </footer>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script>
+  // DevTask 99: UI Load latest (read-only) + autorun=latest
+  const API_PLAN_URL = '/api/trips/plan';
+  const API_LATEST_URL = '/api/trips/autoplan/latest';
+  const API_RUNS_URL = '/api/trips/autoplan/runs';
+  const API_RUN_URL = '/api/trips/autoplan/run';
+
+  const el = (id) => document.getElementById(id);
+
+  const dateInput = el('dateInput');
+  const windowSelect = el('windowSelect');
+  const filterInput = el('filterInput');
+  const clearFilterBtn = el('clearFilterBtn');
+  const onlyDelayed = el('onlyDelayed');
+
+  const latestBtn = el('latestBtn');
+  const latestBtnText = el('latestBtnText');
+  const latestSpinner = el('latestSpinner');
+
+  const planBtn = el('planBtn');
+  const planBtnText = el('planBtnText');
+  const planSpinner = el('planSpinner');
+
+  const copyJsonBtn = el('copyJsonBtn');
+
+  const statusbar = el('statusbar');
+  const statusText = el('statusText');
+  const statusMeta = el('statusMeta');
+  const metaPill = el('metaPill');
+
+  const dotState = el('dotState');
+  const badgeState = el('badgeState');
+  const badgeEngine = el('badgeEngine');
+
+  const runIdBtn = el('runId');
+
+  const runsBtn = el('runsBtn');
+  const runsBtnText = el('runsBtnText');
+  const runsSpinner = el('runsSpinner');
+  const runsMeta = el('runsMeta');
+  const runsList = el('runsList');
+
+  const toast = el('toast');
+
+  const fields = {
+    engine: el('engine'),
+    createdAt: el('createdAt'),
+    ws: el('ws'),
+    we: el('we'),
+    lc: el('lc'),
+    vc: el('vc'),
+    ac: el('ac'),
+    da: el('da'),
+    avg: el('avg'),
+    virt: el('virt'),
+  };
+
+  const kpi = {
+    loads: el('kpiLoads'),
+    vehicles: el('kpiVehicles'),
+    assignments: el('kpiAssignments'),
+    delayed: el('kpiDelayed'),
+    avg: el('kpiAvg'),
+    virt: el('kpiVirtual'),
+  };
+
+  const tbody = el('tbody');
+  const tableMeta = el('tableMeta');
+
+  const sortIds = [
+    'vehicle_code','seq','load_id','pickup_planned_at','delivery_planned_at','start_delay_min'
+  ];
+
+  const state = {
+    lastResp: null,
+    rows: [],
+    sortKey: 'vehicle_code',
+    sortDir: 'asc',
+    filter: '',
+    onlyDelayed: false,
+    loading: false,
+    runs: [],
+    selectedRunId: null,
+  };
+
+  function todayISO() {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  function safe(v) {
+    if (v === null || v === undefined || v === '') return '—';
+    return String(v);
+  }
+
+  function prettyId(id) {
+    const s = safe(id);
+    if (s === '—') return s;
+    if (s.length <= 18) return s;
+    return s.slice(0, 8) + '…' + s.slice(-4);
+  }
+
+  function setDot(kind) {
+    dotState.className = 'dot ' + (kind || '');
+  }
+
+  function setHeaderState(txt, kind) {
+    badgeState.textContent = txt;
+    setDot(kind);
+  }
+
+  function setStatus(txt, kind) {
+    statusText.textContent = txt;
+    statusbar.className = 'statusbar' + (kind ? (' ' + kind) : '');
+  }
+
+  function setLoading(isLoading, source) {
+    state.loading = !!isLoading;
+
+    latestBtn.disabled = state.loading;
+    planBtn.disabled = state.loading;
+    if (runsBtn) runsBtn.disabled = state.loading;
+
+    filterInput.disabled = state.loading;
+    clearFilterBtn.disabled = state.loading;
+    windowSelect.disabled = state.loading;
+    dateInput.disabled = state.loading;
+    onlyDelayed.disabled = state.loading;
+
+    const isLatest = state.loading && source === 'latest';
+    const isPlan = state.loading && source === 'plan';
+    const isRuns = state.loading && (source === 'runs' || source === 'run');
+
+    latestSpinner.style.display = isLatest ? 'inline-block' : 'none';
+    latestBtnText.textContent = isLatest ? 'Loading…' : 'Load latest';
+
+    planSpinner.style.display = isPlan ? 'inline-block' : 'none';
+    planBtnText.textContent = isPlan ? 'Planning…' : 'Plan';
+
+    if (runsSpinner) runsSpinner.style.display = isRuns ? 'inline-block' : 'none';
+    if (runsBtnText) runsBtnText.textContent = (isRuns ? 'Loading…' : 'Load runs');
+
+    if (state.loading) setHeaderState('working', 'wait');
+  }
+
+  let toastTimer = null;
+  function showToast(text) {
+    toast.textContent = text;
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 1400);
+  }
+
+  async function copyText(text) {
+    const t = String(text || '');
+    if (!t) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(t);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = t;
+        ta.style.position = 'fixed';
+        ta.style.left = '-1000px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      showToast('Скопировано');
+    } catch {
+      showToast('Не удалось скопировать');
+    }
+  }
+
+  function inferVirtualVehiclesUsed(rows, payload) {
+    if (payload && typeof payload === 'object' && payload.virtual_vehicles_used !== undefined) {
+      return !!payload.virtual_vehicles_used;
+    }
+    if (!Array.isArray(rows) || rows.length === 0) return undefined;
+    return rows.some(r => String(r?.vehicle_code || '').toUpperCase().startsWith('VIRTUAL-'));
+  }
+
+  function updateClearBtnVisibility() {
+    const has = !!(filterInput.value || '').trim();
+    clearFilterBtn.style.display = has ? 'flex' : 'none';
+  }
+
+  function updateSortIndicators() {
+    for (const k of sortIds) {
+      const s = el('s_' + k);
+      if (!s) continue;
+      if (k !== state.sortKey) { s.textContent = '—'; continue; }
+      s.textContent = (state.sortDir === 'asc') ? '↑' : '↓';
+    }
+  }
+
+  function compare(a, b, key) {
+    const av = a?.[key];
+    const bv = b?.[key];
+
+    if (av === null || av === undefined) return 1;
+    if (bv === null || bv === undefined) return -1;
+
+    if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+
+    if (key.includes('_at')) {
+      const ad = Date.parse(av);
+      const bd = Date.parse(bv);
+      if (!Number.isNaN(ad) && !Number.isNaN(bd)) return ad - bd;
+    }
+
+    return String(av).localeCompare(String(bv));
+  }
+
+  function applyFilterAndSort() {
+    let rows = Array.isArray(state.rows) ? [...state.rows] : [];
+
+    const q = (state.filter || '').trim().toLowerCase();
+    if (q) {
+      rows = rows.filter(r => {
+        const v = String(r?.vehicle_code || '').toLowerCase();
+        const id = String(r?.load_id || '').toLowerCase();
+        return v.includes(q) || id.includes(q);
+      });
+    }
+
+    if (state.onlyDelayed) {
+      rows = rows.filter(r => Number(r?.start_delay_min || 0) > 0);
+    }
+
+    rows.sort((a, b) => {
+      const c = compare(a, b, state.sortKey);
+      return state.sortDir === 'asc' ? c : -c;
+    });
+
+    return rows;
+  }
+
+  function renderTable() {
+    const rows = applyFilterAndSort();
+    tbody.innerHTML = '';
+
+    const total = Array.isArray(state.rows) ? state.rows.length : 0;
+    tableMeta.textContent = `rows: ${rows.length} / ${total}`;
+
+    if (rows.length === 0) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td colspan="6" style="color: var(--text-muted); padding: 14px 12px;">Нет строк. Проверь фильтр / окно / сид.</td>`;
+      tbody.appendChild(tr);
+      return;
+    }
+
+    for (const r of rows) {
+      const vehicle = safe(r?.vehicle_code);
+      const seq = safe(r?.seq);
+      const loadIdFull = safe(r?.load_id);
+      const loadIdPretty = prettyId(loadIdFull);
+      const pickup = safe(r?.pickup_planned_at);
+      const delivery = safe(r?.delivery_planned_at);
+      const delay = safe(r?.start_delay_min);
+
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><span class="vehPill">${vehicle}</span></td>
+        <td class="mono">${seq}</td>
+        <td class="cellId">
+          <button class="copyLink mono" type="button" data-copy="${loadIdFull}" title="Нажми, чтобы скопировать">${loadIdPretty}</button>
+        </td>
+        <td class="mono">${pickup}</td>
+        <td class="mono">${delivery}</td>
+        <td class="mono right">${delay}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+  }
+
+  function render(resp) {
+    state.lastResp = resp;
+    el('raw').textContent = JSON.stringify(resp, null, 2);
+
+    const r = resp?.result || {};
+    if (r?.run_id) state.selectedRunId = String(r.run_id);
+    const s = r?.summary || {};
+    const payload = r?.payload || null;
+
+    const rows = Array.isArray(r?.assignments_sample) ? r.assignments_sample : [];
+    state.rows = rows;
+
+    badgeEngine.textContent = safe(resp?.engine);
+    fields.engine.textContent = safe(resp?.engine);
+
+    const srcMode = safe(resp?.mode);
+    const mode = safe(r?.mode);
+    const win = safe(r?.window);
+    const rok = safe(r?.ok);
+
+    metaPill.textContent = `src=${srcMode} • mode=${mode} • window=${win} • ok=${rok}`;
+
+    const createdAt = r?.created_at ? safe(r.created_at) : '—';
+    fields.createdAt.textContent = createdAt;
+
+    statusMeta.textContent = `run_id=${prettyId(r?.run_id)} • rows=${rows.length} • at=${createdAt === '—' ? '—' : 'ok'}`;
+
+    runIdBtn.textContent = prettyId(r?.run_id);
+    runIdBtn.dataset.copy = safe(r?.run_id);
+
+    fields.ws.textContent = safe(s?.window_start);
+    fields.we.textContent = safe(s?.window_end);
+    fields.lc.textContent = safe(s?.loads_considered);
+    fields.vc.textContent = safe(s?.vehicles_count);
+    fields.ac.textContent = safe(s?.assignments_count);
+    fields.da.textContent = safe(s?.delayed_assignments);
+    fields.avg.textContent = safe(s?.avg_start_delay_min);
+
+    const virtUsed = inferVirtualVehiclesUsed(rows, payload);
+    const virtText = (virtUsed === undefined) ? '—' : String(virtUsed);
+    fields.virt.textContent = virtText;
+
+    kpi.loads.textContent = safe(s?.loads_considered);
+    kpi.vehicles.textContent = safe(s?.vehicles_count);
+    kpi.assignments.textContent = safe(s?.assignments_count);
+    kpi.delayed.textContent = safe(s?.delayed_assignments);
+    kpi.avg.textContent = safe(s?.avg_start_delay_min);
+    kpi.virt.textContent = virtText;
+
+    updateSortIndicators();
+    renderTable();
+  }
+
+  async function loadLatest() {
+    setLoading(true, 'latest');
+    setStatus('Загружаю последний прогон (read-only)…', '');
+
+    try {
+      const res = await fetch(`${API_LATEST_URL}?limit=200`, { method: 'GET' });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`HTTP ${res.status}: ${txt}`);
+      }
+
+      const json = await res.json();
+
+      if (json?.date) dateInput.value = json.date;
+      if (json?.window && windowSelect.querySelector(`option[value="${json.window}"]`)) {
+        windowSelect.value = json.window;
+      }
+
+      render(json);
+
+      if (json?.ok && json?.result?.ok) {
+        setStatus('Ок: загружен последний прогон.', 'ok');
+        setHeaderState('ok', 'ok');
+      } else {
+        setStatus('Latest run: ok=false (см. Raw JSON).', 'err');
+        setHeaderState('error', 'err');
+      }
+    } catch (e) {
+      setStatus('Ошибка latest run: ' + (e?.message || e), 'err');
+      setHeaderState('error', 'err');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function renderRunsList() {
+    if (!runsList) return;
+    const items = Array.isArray(state.runs) ? state.runs : [];
+    runsList.innerHTML = '';
+
+    if (!items.length) {
+      const d = document.createElement('div');
+      d.style.opacity = '.65';
+      d.textContent = 'Нет прогонов. Сначала запусти Plan или проверь DB.';
+      runsList.appendChild(d);
+      return;
+    }
+
+    for (const it of items) {
+      const rid = String(it?.run_id || '').trim();
+      const created = safe(it?.created_at);
+      const win = safe(it?.window);
+      const ok = (it?.ok === true) ? 'ok' : (it?.ok === false ? 'err' : '—');
+      const ac = safe(it?.assignments_count);
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'copyLink mono';
+      btn.setAttribute('data-runid', rid);
+      btn.title = 'Click: load run • Shift+Click: copy run_id';
+      btn.style.textAlign = 'left';
+      btn.style.width = '100%';
+      btn.style.display = 'flex';
+      btn.style.alignItems = 'center';
+      btn.style.justifyContent = 'space-between';
+      btn.style.gap = '10px';
+      btn.style.padding = '10px 10px';
+
+      const left = document.createElement('span');
+      left.style.display = 'flex';
+      left.style.flexDirection = 'column';
+      left.style.gap = '3px';
+
+      const l1 = document.createElement('span');
+      l1.textContent = `${prettyId(rid)}  (${ok})`;
+      if (state.selectedRunId && rid && state.selectedRunId === rid) l1.style.fontWeight = '700';
+
+      const l2 = document.createElement('span');
+      l2.style.opacity = '.75';
+      l2.textContent = `at=${created} • window=${win} • assignments=${ac}`;
+
+      left.appendChild(l1);
+      left.appendChild(l2);
+
+      const right = document.createElement('span');
+      right.style.opacity = '.7';
+      right.textContent = (state.selectedRunId && rid && state.selectedRunId === rid) ? 'selected' : '';
+
+      btn.appendChild(left);
+      btn.appendChild(right);
+      runsList.appendChild(btn);
+    }
+  }
+
+  async function loadRuns() {
+    setLoading(true, 'runs');
+    if (runsMeta) runsMeta.textContent = 'loading…';
+    setStatus('Загружаю историю прогонов (read-only)…', '');
+    try {
+      const res = await fetch(`${API_RUNS_URL}?limit=80`, { method: 'GET' });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`HTTP ${res.status}: ${txt}`);
+      }
+      const json = await res.json();
+      const items = Array.isArray(json?.items) ? json.items : [];
+      state.runs = items;
+      if (runsMeta) runsMeta.textContent = `runs=${items.length}`;
+      renderRunsList();
+      setStatus('Ок: история прогонов загружена.', 'ok');
+      setHeaderState('ok', 'ok');
+    } catch (e) {
+      if (runsMeta) runsMeta.textContent = '—';
+      setStatus('Ошибка runs: ' + (e?.message || e), 'err');
+      setHeaderState('error', 'err');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadRun(runId) {
+    const rid = String(runId || '').trim();
+    if (!rid) return;
+    setLoading(true, 'run');
+    setStatus(`Загружаю прогон ${prettyId(rid)} (read-only)…`, '');
+    try {
+      const url = `${API_RUN_URL}/${encodeURIComponent(rid)}?limit=200`;
+      const res = await fetch(url, { method: 'GET' });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`HTTP ${res.status}: ${txt}`);
+      }
+      const json = await res.json();
+      render(json);
+      renderRunsList();
+      setStatus('Ок: прогон загружен.', 'ok');
+      setHeaderState('ok', 'ok');
+
+      const qs = new URLSearchParams(window.location.search);
+      qs.set('run_id', rid);
+      qs.delete('autorun');
+      const q = qs.toString();
+      history.replaceState(null, '', q ? (`${window.location.pathname}?${q}`) : window.location.pathname);
+    } catch (e) {
+      setStatus('Ошибка run: ' + (e?.message || e), 'err');
+      setHeaderState('error', 'err');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+
+  async function runPlan() {
+    const date = dateInput.value || todayISO();
+    const window = windowSelect.value || 'day';
+
+    setLoading(true, 'plan');
+    setStatus('Запускаю автоплан (создаёт новый run)…', '');
+    try {
+      const res = await fetch(API_PLAN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date, window })
+      });
+
+      const json = await res.json();
+      render(json);
+
+      if (json?.ok && json?.result?.ok) {
+        setStatus('Ок: автоплан выполнен.', 'ok');
+        setHeaderState('ok', 'ok');
+      } else {
+        setStatus('Автоплан вернул ok=false (см. Raw JSON).', 'err');
+        setHeaderState('error', 'err');
+      }
+    } catch (e) {
+      setStatus('Ошибка plan: ' + (e?.message || e), 'err');
+      setHeaderState('error', 'err');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // --- Events ---
+  planBtn.addEventListener('click', runPlan);
+  latestBtn.addEventListener('click', loadLatest);
+  if (runsBtn) runsBtn.addEventListener('click', loadRuns);
+  if (runsList) runsList.addEventListener('click', (ev) => {
+    const btn = ev.target?.closest?.('[data-runid]');
+    if (!btn) return;
+    const rid = btn.getAttribute('data-runid');
+    if (!rid) return;
+    if (ev.shiftKey) copyText(rid);
+    else loadRun(rid);
+  });
+
+  copyJsonBtn.addEventListener('click', () => {
+    copyText(el('raw').textContent || '');
+  });
+
+  runIdBtn.addEventListener('click', () => copyText(runIdBtn.dataset.copy || ''));
+
+  tbody.addEventListener('click', (ev) => {
+    const btn = ev.target?.closest?.('[data-copy]');
+    if (!btn) return;
+    const txt = btn.getAttribute('data-copy');
+    if (txt) copyText(txt);
+  });
+
+  document.querySelector('thead')?.addEventListener('click', (ev) => {
+    const th = ev.target?.closest?.('th[data-sort]');
+    if (!th) return;
+    const key = th.getAttribute('data-sort');
+    if (!key) return;
+
+    if (state.sortKey === key) state.sortDir = (state.sortDir === 'asc') ? 'desc' : 'asc';
+    else { state.sortKey = key; state.sortDir = 'asc'; }
+
+    updateSortIndicators();
+    renderTable();
+  });
+
+  filterInput.addEventListener('input', () => {
+    state.filter = filterInput.value || '';
+    updateClearBtnVisibility();
+    renderTable();
+  });
+
+  clearFilterBtn.addEventListener('click', () => {
+    filterInput.value = '';
+    state.filter = '';
+    updateClearBtnVisibility();
+    renderTable();
+    filterInput.focus();
+  });
+
+  onlyDelayed.addEventListener('change', () => {
+    state.onlyDelayed = !!onlyDelayed.checked;
+    renderTable();
+  });
+
+  // hotkeys (when not typing in inputs)
+  document.addEventListener('keydown', (e) => {
+    const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
+    const inInput = (tag === 'input' || tag === 'select' || tag === 'textarea');
+
+    if (!inInput && e.key === '/') {
+      e.preventDefault();
+      filterInput.focus();
+      return;
+    }
+    if (inInput) return;
+
+    if (e.key.toLowerCase() === 'l') loadLatest();
+    if (e.key.toLowerCase() === 'p') runPlan();
+  });
+
+  // init
+  dateInput.value = todayISO();
+  setHeaderState('ready', '');
+  updateSortIndicators();
+  updateClearBtnVisibility();
+
+  // autorun=1 -> read-only latest (no side effects)
+  const qs = new URLSearchParams(window.location.search);
+  const qRun = (qs.get('run_id') || '').trim();
+  if (qRun) {
+    setTimeout(() => loadRun(qRun), 80);
+  } else if (qs.get('autorun') === '1') {
+    setTimeout(loadLatest, 80);
+  }
+</script>
+</body>
+</html>

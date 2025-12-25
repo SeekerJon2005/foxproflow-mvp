@@ -1,221 +1,591 @@
-﻿# src/worker/celery_app.py
+# -*- coding: utf-8 -*-
+"""
+FoxProFlow Celery app bootstrap.
+
+Goals:
+- One import-safe module for celery app/beat/worker.
+- Stable env parsing across Windows host + Docker Desktop.
+- Hardened defaults, explicit broker/backend DSNs.
+- Safe "force bind" (avoid 127.0.0.1/localhost inside containers).
+- Autodiscover tasks and register beat schedule (optional; main schedule is anchored by register_tasks).
+
+NOTE:
+- This file must be import-safe: API routers may import Celery app for health/ops endpoints.
+- Any exception at import-time can cascade into missing routers (e.g., /api/autoplan/* -> 404).
+
+DEV-M0 NOTE (critical):
+- Worker must register task 'devfactory.commercial.run_order' at startup.
+  Otherwise worker will DISCARD messages as "Received unregistered task..."
+  Fix: anchor import of src.worker.tasks.devfactory_commercial (safe import).
+"""
+
 from __future__ import annotations
 
+import json
 import os
-import logging
-from datetime import date
-from pathlib import Path
+import re
+from typing import Any, Dict, Optional
 
 from celery import Celery
+from celery.schedules import crontab
 
 # ---------------------------------------------------------------------
-# Загрузка переменных окружения: .env.local (локальный запуск) или .env (docker)
+# Env helpers
 # ---------------------------------------------------------------------
+
+TRUE_SET = {"1", "true", "yes", "y", "on", "enable", "enabled"}
+FALSE_SET = {"0", "false", "no", "n", "off", "disable", "disabled"}
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    v = os.getenv(name, "")
+    if v == "":
+        return default
+    s = str(v).strip().lower()
+    if s in TRUE_SET:
+        return True
+    if s in FALSE_SET:
+        return False
+    return default
+
+
+def _env_int(name: str, default: int) -> int:
+    v = os.getenv(name, "")
+    if v == "":
+        return default
+    try:
+        return int(str(v).strip())
+    except Exception:
+        return default
+
+
+def _env_str(name: str, default: str = "") -> str:
+    v = os.getenv(name, "")
+    if v == "":
+        return default
+    return str(v)
+
+
+def _safe_json_loads(v: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not v:
+        return None
+    try:
+        obj = json.loads(v)
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------
+# Docker detection + DSN sanitization
+# ---------------------------------------------------------------------
+
+
+def _in_docker() -> bool:
+    if os.path.exists("/.dockerenv"):
+        return True
+    if os.getenv("KUBERNETES_SERVICE_HOST"):
+        return True
+    try:
+        with open("/proc/1/cgroup", "r", encoding="utf-8", errors="ignore") as f:
+            txt = f.read()
+        if "docker" in txt or "kubepods" in txt or "containerd" in txt:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _replace_localhost_in_dsn(dsn: str, host: str) -> str:
+    """
+    Replace host part for DSNs that point to localhost/127.0.0.1.
+
+    Handles:
+      - redis://localhost:6379/0
+      - postgresql://user:pass@127.0.0.1:5432/db
+      - amqp://guest:guest@localhost:5672//
+    """
+    if not dsn:
+        return dsn
+    dsn = re.sub(r"(//)(localhost)([:/])", rf"\1{host}\3", dsn)
+    dsn = re.sub(r"(@)(localhost)([:/])", rf"\1{host}\3", dsn)
+    dsn = re.sub(r"(//)(127\.0\.0\.1)([:/])", rf"\1{host}\3", dsn)
+    dsn = re.sub(r"(@)(127\.0\.0\.1)([:/])", rf"\1{host}\3", dsn)
+    return dsn
+
+
+def _dsn_scheme(dsn: str) -> str:
+    try:
+        return (dsn.split("://", 1)[0] or "").strip().lower()
+    except Exception:
+        return ""
+
+
+def _sanitize_env_for_container() -> None:
+    """
+    If we're in Docker, prevent common misconfig:
+      - Broker points to localhost (inside container => wrong)
+      - Redis backend points to localhost
+      - DB points to localhost
+
+    IMPORTANT FOR FoxProFlow:
+      - By default we replace to service-hosts (redis/postgres/rabbitmq),
+        not host.docker.internal.
+
+    This function MUST NOT raise.
+    """
+    if not _in_docker():
+        return
+
+    # service hosts (docker-compose network)
+    pg_host = os.getenv("POSTGRES_HOST", "postgres")
+    rd_host = os.getenv("REDIS_HOST", "redis")
+    rb_host = os.getenv("RABBITMQ_HOST", "rabbitmq")
+
+    def pick_host_for_dsn(dsn: str) -> str:
+        s = _dsn_scheme(dsn)
+        if s in {"postgres", "postgresql"}:
+            return pg_host
+        if s in {"redis", "rediss"}:
+            return rd_host
+        if s in {"amqp", "pyamqp"}:
+            return rb_host
+        # fallback: keep service-ish behavior
+        return os.getenv("DOCKER_HOST_INTERNAL", "host.docker.internal")
+
+    dsn_vars = [
+        "CELERY_BROKER_URL",
+        "CELERY_RESULT_BACKEND",
+        "REDIS_URL",
+        "DATABASE_URL",
+        "POSTGRES_DSN",
+        "RABBITMQ_URL",
+    ]
+    for k in dsn_vars:
+        v = os.getenv(k)
+        if not v:
+            continue
+        v_str = str(v)
+        if ("127.0.0.1" in v_str) or ("localhost" in v_str):
+            os.environ[k] = _replace_localhost_in_dsn(v_str, pick_host_for_dsn(v_str))
+
+    # Also patch plain host vars if present
+    host_vars = [
+        ("REDIS_HOST", rd_host),
+        ("POSTGRES_HOST", pg_host),
+        ("RABBITMQ_HOST", rb_host),
+    ]
+    for k, default_host in host_vars:
+        v = os.getenv(k)
+        if not v:
+            continue
+        v_str = str(v).strip().lower()
+        if v_str in {"127.0.0.1", "localhost"}:
+            os.environ[k] = default_host
+
+
+# ---------------------------------------------------------------------
+# DSN builders (redis/postgres/rabbit)
+# ---------------------------------------------------------------------
+
+# sanitize before reading DSNs
+_sanitize_env_for_container()
+
+# Redis
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT = _env_int("REDIS_PORT", 6379)
+REDIS_DB_BROKER = _env_int("REDIS_DB", 0)
+REDIS_DB_BACKEND = _env_int("REDIS_RESULT_DB", _env_int("REDIS_BACKEND_DB", 1))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
+
+# Postgres
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")
+POSTGRES_PORT = _env_int("POSTGRES_PORT", 5432)
+POSTGRES_DB = os.getenv("POSTGRES_DB", os.getenv("POSTGRES_DATABASE", "foxproflow"))
+POSTGRES_USER = os.getenv("POSTGRES_USER", os.getenv("POSTGRES_USERNAME", "admin"))
+POSTGRES_PASSWORD_ENV = os.getenv("POSTGRES_PASSWORD", os.getenv("POSTGRES_PASS", ""))
+
+# Rabbit (optional)
+RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
+RABBITMQ_PORT = _env_int("RABBITMQ_PORT", 5672)
+RABBITMQ_USER = os.getenv("RABBITMQ_USER", "guest")
+RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "guest")
+RABBITMQ_VHOST = os.getenv("RABBITMQ_VHOST", "/")
+
+
+def _build_redis_url(db_index: int) -> str:
+    auth = f":{REDIS_PASSWORD}@" if REDIS_PASSWORD else ""
+    return f"redis://{auth}{REDIS_HOST}:{REDIS_PORT}/{int(db_index)}"
+
+
+def _build_postgres_url() -> str:
+    """
+    Prefer DATABASE_URL / POSTGRES_DSN if explicitly set.
+    Else build from POSTGRES_* vars.
+    """
+    explicit = os.getenv("DATABASE_URL", "") or os.getenv("POSTGRES_DSN", "")
+    if explicit:
+        return explicit
+
+    pw = POSTGRES_PASSWORD_ENV or ""
+    auth = f"{POSTGRES_USER}:{pw}@" if pw else f"{POSTGRES_USER}@"
+    return f"postgresql://{auth}{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
+
+
+def _build_rabbit_url() -> str:
+    explicit = os.getenv("RABBITMQ_URL", "")
+    if explicit:
+        return explicit
+    vhost = RABBITMQ_VHOST
+    if vhost == "/":
+        vhost = "%2F"
+    return f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASSWORD}@{RABBITMQ_HOST}:{RABBITMQ_PORT}/{vhost}"
+
+
+# ---------------------------------------------------------------------
+# Celery config
+# ---------------------------------------------------------------------
+
+USE_RABBITMQ = _env_bool("USE_RABBITMQ", False)
+
+DEFAULT_REDIS_BROKER_URL = _build_redis_url(REDIS_DB_BROKER)
+DEFAULT_REDIS_BACKEND_URL = _build_redis_url(REDIS_DB_BACKEND)
+DEFAULT_RABBIT_URL = _build_rabbit_url()
+
+CELERY_BROKER_URL = os.getenv(
+    "CELERY_BROKER_URL",
+    DEFAULT_RABBIT_URL if USE_RABBITMQ else DEFAULT_REDIS_BROKER_URL,
+)
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", DEFAULT_REDIS_BACKEND_URL)
+
+# Serializers / content
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+
+# Timezone: prefer explicit CELERY_TIMEZONE; else use TZ; else UTC
+CELERY_TIMEZONE = os.getenv("CELERY_TIMEZONE", os.getenv("TZ", "UTC"))
+CELERY_ENABLE_UTC = _env_bool("CELERY_ENABLE_UTC", True)
+
+# Worker behavior
+CELERY_TASK_ACKS_LATE = _env_bool("CELERY_TASK_ACKS_LATE", True)
+CELERY_TASK_REJECT_ON_WORKER_LOST = _env_bool("CELERY_TASK_REJECT_ON_WORKER_LOST", True)
+CELERY_WORKER_PREFETCH_MULTIPLIER = _env_int("CELERY_WORKER_PREFETCH_MULTIPLIER", 1)
+CELERY_WORKER_MAX_TASKS_PER_CHILD = _env_int(
+    "CELERY_MAX_TASKS_PER_CHILD",
+    _env_int("CELERY_WORKER_MAX_TASKS_PER_CHILD", 500),
+)
+CELERY_WORKER_MAX_MEMORY_PER_CHILD = _env_int("CELERY_WORKER_MAX_MEMORY_PER_CHILD", 0)  # 0 => disabled
+CELERY_WORKER_CONCURRENCY = _env_int("CELERY_WORKER_CONCURRENCY", 0)  # 0 => celery default
+CELERY_HIJACK_ROOT_LOGGER = _env_bool("CELERY_HIJACK_ROOT_LOGGER", False)
+
+# Time limits
+CELERY_TASK_TIME_LIMIT_SEC = _env_int("CELERY_TASK_TIME_LIMIT_SEC", 0)
+CELERY_TASK_SOFT_TIME_LIMIT_SEC = _env_int("CELERY_TASK_SOFT_TIME_LIMIT_SEC", 0)
+
+# Result backend expiration
+CELERY_RESULT_EXPIRES_SEC = _env_int("CELERY_RESULT_EXPIRES_SEC", 86400)
+
+# Broker tuning
+CELERY_BROKER_HEARTBEAT = _env_int("CELERY_BROKER_HEARTBEAT", 0)
+CELERY_BROKER_POOL_LIMIT = _env_int("CELERY_BROKER_POOL_LIMIT", 0)
+
+BROKER_TRANSPORT_OPTIONS = _safe_json_loads(os.getenv("CELERY_BROKER_TRANSPORT_OPTIONS"))
+BACKEND_TRANSPORT_OPTIONS = _safe_json_loads(os.getenv("CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS"))
+
+# Eager mode (tests/debug)
+CELERY_TASK_ALWAYS_EAGER = _env_bool("CELERY_TASK_ALWAYS_EAGER", False)
+CELERY_TASK_EAGER_PROPAGATES = _env_bool("CELERY_TASK_EAGER_PROPAGATES", True)
+
+# Queues / routing defaults
+CELERY_DEFAULT_QUEUE = os.getenv("CELERY_DEFAULT_QUEUE", "celery")
+CELERY_TASK_DEFAULT_QUEUE = CELERY_DEFAULT_QUEUE
+CELERY_TASK_DEFAULT_EXCHANGE = os.getenv("CELERY_DEFAULT_EXCHANGE", "default")
+CELERY_TASK_DEFAULT_ROUTING_KEY = os.getenv("CELERY_DEFAULT_ROUTING_KEY", "default")
+
+# Observability / events
+CELERY_WORKER_SEND_TASK_EVENTS = _env_bool("CELERY_WORKER_SEND_TASK_EVENTS", True)
+CELERY_TASK_SEND_SENT_EVENT = _env_bool("CELERY_TASK_SEND_SENT_EVENT", True)
+
+# Beat
+ENABLE_BEAT = _env_bool("ENABLE_BEAT", True)
+ENABLE_BEAT_HEARTBEAT = _env_bool("ENABLE_BEAT_HEARTBEAT", False)
+
+# ---------------------------------------------------------------------
+# Create Celery app
+# ---------------------------------------------------------------------
+
+app = Celery("foxproflow", broker=CELERY_BROKER_URL, backend=CELERY_RESULT_BACKEND)
+
+# Apply config
+_conf: Dict[str, Any] = dict(
+    broker_url=CELERY_BROKER_URL,
+    result_backend=CELERY_RESULT_BACKEND,
+    accept_content=CELERY_ACCEPT_CONTENT,
+    task_serializer=CELERY_TASK_SERIALIZER,
+    result_serializer=CELERY_RESULT_SERIALIZER,
+    timezone=CELERY_TIMEZONE,
+    enable_utc=CELERY_ENABLE_UTC,
+    task_acks_late=CELERY_TASK_ACKS_LATE,
+    task_reject_on_worker_lost=CELERY_TASK_REJECT_ON_WORKER_LOST,
+    worker_prefetch_multiplier=CELERY_WORKER_PREFETCH_MULTIPLIER,
+    worker_max_tasks_per_child=CELERY_WORKER_MAX_TASKS_PER_CHILD,
+    result_expires=CELERY_RESULT_EXPIRES_SEC,
+    task_default_queue=CELERY_TASK_DEFAULT_QUEUE,
+    task_default_exchange=CELERY_TASK_DEFAULT_EXCHANGE,
+    task_default_routing_key=CELERY_TASK_DEFAULT_ROUTING_KEY,
+    worker_send_task_events=CELERY_WORKER_SEND_TASK_EVENTS,
+    task_send_sent_event=CELERY_TASK_SEND_SENT_EVENT,
+    worker_hijack_root_logger=CELERY_HIJACK_ROOT_LOGGER,
+    task_always_eager=CELERY_TASK_ALWAYS_EAGER,
+    task_eager_propagates=CELERY_TASK_EAGER_PROPAGATES,
+    broker_connection_retry_on_startup=True,
+    task_create_missing_queues=True,
+)
+
+if CELERY_TASK_TIME_LIMIT_SEC and CELERY_TASK_TIME_LIMIT_SEC > 0:
+    _conf["task_time_limit"] = int(CELERY_TASK_TIME_LIMIT_SEC)
+if CELERY_TASK_SOFT_TIME_LIMIT_SEC and CELERY_TASK_SOFT_TIME_LIMIT_SEC > 0:
+    _conf["task_soft_time_limit"] = int(CELERY_TASK_SOFT_TIME_LIMIT_SEC)
+
+if CELERY_WORKER_MAX_MEMORY_PER_CHILD and CELERY_WORKER_MAX_MEMORY_PER_CHILD > 0:
+    _conf["worker_max_memory_per_child"] = int(CELERY_WORKER_MAX_MEMORY_PER_CHILD)
+
+if CELERY_WORKER_CONCURRENCY and CELERY_WORKER_CONCURRENCY > 0:
+    _conf["worker_concurrency"] = int(CELERY_WORKER_CONCURRENCY)
+
+if CELERY_BROKER_HEARTBEAT and CELERY_BROKER_HEARTBEAT > 0:
+    _conf["broker_heartbeat"] = int(CELERY_BROKER_HEARTBEAT)
+
+if CELERY_BROKER_POOL_LIMIT and CELERY_BROKER_POOL_LIMIT > 0:
+    _conf["broker_pool_limit"] = int(CELERY_BROKER_POOL_LIMIT)
+
+if isinstance(BROKER_TRANSPORT_OPTIONS, dict):
+    _conf["broker_transport_options"] = BROKER_TRANSPORT_OPTIONS
+
+if isinstance(BACKEND_TRANSPORT_OPTIONS, dict):
+    # celery expects `result_backend_transport_options`
+    _conf["result_backend_transport_options"] = BACKEND_TRANSPORT_OPTIONS
+
+app.conf.update(**_conf)
+
+# ---------------------------------------------------------------------
+# Optional: honor CELERY_INCLUDE / CELERY_IMPORTS (comma-separated)
+# ---------------------------------------------------------------------
+
+
+def _split_modules(s: str) -> list[str]:
+    out: list[str] = []
+    for part in (s or "").split(","):
+        p = part.strip()
+        if p:
+            out.append(p)
+    return out
+
+
+def _dedupe(seq: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for x in seq:
+        if x in seen:
+            continue
+        seen.add(x)
+        out.append(x)
+    return out
+
+
+BASE_MODULES = [
+    # register_tasks anchors beat schedule and imports task modules at app configure time
+    "src.worker.register_tasks",
+    # ops tasks MUST be importable, otherwise worker will drop ops.* messages
+    "src.worker.tasks_ops",
+    # DEV-M0: commercial loop tasks MUST be importable, otherwise worker discards devfactory.commercial.run_order
+    "src.worker.tasks.devfactory_commercial",
+]
+
+ENV_IMPORTS = _split_modules(os.getenv("CELERY_IMPORTS", ""))
+ENV_INCLUDE = _split_modules(os.getenv("CELERY_INCLUDE", ""))
+
+MODULES = _dedupe(BASE_MODULES + ENV_IMPORTS + ENV_INCLUDE)
 try:
-    from dotenv import load_dotenv  # type: ignore
-
-    env_path = Path(".").joinpath(".env.local")
-    if not env_path.exists():
-        env_path = Path(".").joinpath(".env")
-    if env_path.exists():
-        load_dotenv(dotenv_path=env_path)
+    app.conf.imports = MODULES
+    app.conf.include = MODULES
 except Exception:
-    # dotenv опционален; если не установлен — просто пропускаем
     pass
 
 # ---------------------------------------------------------------------
-# Конфигурация брокера Celery (Redis) и Postgres
+# Optional autodiscover (off by default in FoxProFlow; use explicit modules)
 # ---------------------------------------------------------------------
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_DB = os.getenv("REDIS_DB", "0")
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
-if REDIS_PASSWORD:
-    REDIS_URL = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:6379/{REDIS_DB}"
-else:
-    # допустим и пустой пароль
-    REDIS_URL = f"redis://{REDIS_HOST}:6379/{REDIS_DB}"
 
-# Строка подключения к Postgres: сначала берём DATABASE_URL,
-# иначе собираем из POSTGRES_* (для docker по умолчанию host=postgres).
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    pg_user = os.getenv("POSTGRES_USER", "admin")
-    pg_pass = os.getenv("POSTGRES_PASSWORD", "password")
-    pg_host = os.getenv("POSTGRES_HOST", "postgres")  # локально можно поставить localhost
-    pg_port = os.getenv("POSTGRES_PORT", "5432")
-    pg_db = os.getenv("POSTGRES_DB", "foxproflow")
-    DATABASE_URL = f"postgresql://{pg_user}:{pg_pass}@{pg_host}:{pg_port}/{pg_db}"
-
-# Инициализация приложения Celery
-celery = Celery("foxproflow", broker=REDIS_URL, backend=REDIS_URL)
-
-# ---------------------------------------------------------------------
-# Вспомогательная функция подключения к БД с fallback на psycopg2
-# ---------------------------------------------------------------------
-def _connect_pg():
-    """
-    Возвращает соединение с Postgres.
-    Сначала пытается psycopg (v3), затем psycopg2 (v2).
-    """
+FF_CELERY_AUTODISCOVER = _env_bool("FF_CELERY_AUTODISCOVER", False)
+if FF_CELERY_AUTODISCOVER:
+    # If you have a dedicated package that follows Celery autodiscover conventions.
+    AUTODISCOVER_PACKAGES = ["src.worker"]
     try:
-        import psycopg  # psycopg 3
-        return psycopg.connect(DATABASE_URL)
+        app.autodiscover_tasks(AUTODISCOVER_PACKAGES, force=True)
     except Exception:
-        import psycopg2 as psycopg  # type: ignore
-        return psycopg.connect(DATABASE_URL)
+        pass
 
 # ---------------------------------------------------------------------
-# Вспомогательная функция: безопасный REFRESH MV (с CONCURRENTLY + fallback)
+# Beat schedule (minimal bootstrap schedules)
+# NOTE: main scheduling is anchored by src.worker.register_tasks
 # ---------------------------------------------------------------------
-def _refresh_mv_safely(mv_name: str):
-    """
-    Пытается сделать REFRESH MATERIALIZED VIEW CONCURRENTLY <mv_name>.
-    Если БД не позволяет CONCURRENTLY (нет уникального индекса/локи/ограничения),
-    выполняет REFRESH без CONCURRENTLY как безопасный fallback.
 
-    Возвращает dict с признаком concurrent/fallback.
-    """
-    conn = _connect_pg()
+
+def _schedule_enabled(name: str, default: bool = True) -> bool:
+    return _env_bool(f"SCHEDULE_{name.upper()}_ENABLED", default)
+
+
+def _schedule_crontab(spec: str) -> crontab:
+    parts = (spec or "").strip().split()
+    if len(parts) != 5:
+        return crontab()
+    minute, hour, dom, month, dow = parts
+    return crontab(minute=minute, hour=hour, day_of_month=dom, month_of_year=month, day_of_week=dow)
+
+
+def _add_schedule(task_name: str, schedule_obj: Any, args: Optional[tuple] = None, kwargs: Optional[Dict[str, Any]] = None) -> None:
+    if not ENABLE_BEAT:
+        return
+    if not getattr(app.conf, "beat_schedule", None):
+        app.conf.beat_schedule = {}
+    app.conf.beat_schedule[task_name] = {
+        "task": task_name,
+        "schedule": schedule_obj,
+        "args": args or (),
+        "kwargs": kwargs or {},
+        # keep routing deterministic
+        "options": {"queue": CELERY_DEFAULT_QUEUE},
+    }
+
+
+SCHEDULE_KEY_QUEUE_WATCHDOG = os.getenv("SCHEDULE_QUEUE_WATCHDOG", "*/5 * * * *")
+SCHEDULE_KEY_OPS_ALERTS = os.getenv("SCHEDULE_OPS_ALERTS", "*/5 * * * *")
+SCHEDULE_KEY_BEAT_HEARTBEAT = os.getenv("SCHEDULE_BEAT_HEARTBEAT", "*/1 * * * *")
+
+# KPI
+SCHEDULE_KEY_KPI_SNAPSHOT = os.getenv("SCHEDULE_KPI_SNAPSHOT", "0 * * * *")  # hourly at :00
+SCHEDULE_KEY_KPI_DAILY = os.getenv("SCHEDULE_KPI_DAILY", "5 0 * * *")  # 00:05
+
+
+def _register_default_schedules() -> None:
+    # Ops watchers (enabled by default)
+    if _schedule_enabled("queue_watchdog", True):
+        _add_schedule("ops.queue.watchdog", _schedule_crontab(SCHEDULE_KEY_QUEUE_WATCHDOG))
+    if _schedule_enabled("ops_alerts", True):
+        _add_schedule("ops.alerts.sla", _schedule_crontab(SCHEDULE_KEY_OPS_ALERTS))
+
+    # Beat heartbeat (only if explicitly enabled)
+    if ENABLE_BEAT_HEARTBEAT and _schedule_enabled("beat_heartbeat", True):
+        _add_schedule("ops.beat.heartbeat", _schedule_crontab(SCHEDULE_KEY_BEAT_HEARTBEAT))
+
+    # KPI
+    if _schedule_enabled("kpi_snapshot", True):
+        _add_schedule("planner.kpi.snapshot", _schedule_crontab(SCHEDULE_KEY_KPI_SNAPSHOT))
+    if _schedule_enabled("kpi_daily", True):
+        _add_schedule("planner.kpi.daily_refresh", _schedule_crontab(SCHEDULE_KEY_KPI_DAILY))
+
+
+try:
+    _register_default_schedules()
+except Exception:
+    pass
+
+# ---------------------------------------------------------------------
+# Diagnostics helpers
+# ---------------------------------------------------------------------
+
+
+def _mask_url(url: str) -> str:
+    if not url:
+        return url
     try:
-        cur = conn.cursor()
-        # Для CONCURRENTLY требуется autocommit=True (операция вне транзакции)
-        fallback_error = None
-        try:
-            try:
-                # psycopg2/psycopg3 оба поддерживают атрибут autocommit
-                conn.autocommit = True  # type: ignore[attr-defined]
-            except Exception:
-                pass
-            cur.execute(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {mv_name};")
-            return {"ok": True, "mv": mv_name, "concurrently": True}
-        except Exception as e:
-            # Переходим на обычный REFRESH (в транзакции)
-            fallback_error = str(e)
-            try:
-                # выключим autocommit, если включен
-                if getattr(conn, "autocommit", False):
-                    conn.autocommit = False  # type: ignore[attr-defined]
-            except Exception:
-                pass
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-            cur.execute(f"REFRESH MATERIALIZED VIEW {mv_name};")
-            conn.commit()
-            return {
-                "ok": True,
-                "mv": mv_name,
-                "concurrently": False,
-                "fallback_reason": fallback_error,
-            }
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+        # mask redis password
+        if url.startswith("redis://") and "@" in url:
+            # redis://:pass@host:port/db
+            pre, rest = url.split("redis://", 1)
+            if "@" in rest and ":" in rest.split("@", 1)[0]:
+                creds, host = rest.split("@", 1)
+                user = creds.split(":", 1)[0]
+                return f"redis://{user}:{'***'}@{host}"
+        # mask postgres password
+        if url.startswith("postgresql://") and "@" in url:
+            scheme, rest = url.split("://", 1)
+            if "@" in rest and ":" in rest.split("@", 1)[0]:
+                user, _pwd = rest.split("@", 1)[0].split(":", 1)
+                return f"{scheme}://{user}:{'***'}@{rest.split('@',1)[1]}"
+    except Exception:
+        pass
+    return url
 
-# ---------------------------------------------------------------------
-# TASK: Ежедневный ETL макропоказателей в таблицу public.macro_data
-# ---------------------------------------------------------------------
-@celery.task(name="etl.macro_data.daily")
-def etl_macro_data_daily():
-    """
-    Ежедневный апсерт макропоказателей.
-    Источник по умолчанию — переменные окружения (USD_RATE, EUR_RATE, FUEL_PRICE_AVG, MACRO_SOURCE).
-    При необходимости легко заменить на вызов внешнего API.
-    """
-    usd = float(os.getenv("USD_RATE", "92.5000"))       # под NUMERIC(10,4)
-    eur = float(os.getenv("EUR_RATE", "98.3000"))       # под NUMERIC(10,4)
-    fuel = float(os.getenv("FUEL_PRICE_AVG", "60.00"))  # под NUMERIC(10,2)
-    src  = os.getenv("MACRO_SOURCE", "env/manual")
-    today = date.today()
 
-    conn = _connect_pg()
+def _has_task(name: str) -> bool:
     try:
-        cur = conn.cursor()
-        # upsert по уникальному ключу (date)
-        cur.execute(
-            """
-            INSERT INTO macro_data(date, usd_rate, eur_rate, fuel_price_avg, source)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (date) DO UPDATE
-            SET usd_rate       = EXCLUDED.usd_rate,
-                eur_rate       = EXCLUDED.eur_rate,
-                fuel_price_avg = EXCLUDED.fuel_price_avg,
-                source         = EXCLUDED.source,
-                updated_at     = now();
-            """,
-            (today, usd, eur, fuel, src),
-        )
-        conn.commit()
-        return {"ok": True, "date": str(today), "usd": usd, "eur": eur, "fuel": fuel, "source": src}
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+        return str(name) in getattr(app, "tasks", {})
+    except Exception:
+        return False
 
-# ---------------------------------------------------------------------
-# TASK: REFRESH materialized view со ставками (таск оставляем; в beat не планируем)
-# ---------------------------------------------------------------------
-@celery.task(name="mv.refresh.market_rates")
-def refresh_market_rates():
-    """
-    Обновление агрегатов ставок:
-      REFRESH MATERIALIZED VIEW [CONCURRENTLY] market_rates_mv;
-    """
+
+def celery_env_summary() -> Dict[str, Any]:
+    return {
+        "in_docker": _in_docker(),
+        "broker": _mask_url(CELERY_BROKER_URL),
+        "backend": _mask_url(CELERY_RESULT_BACKEND),
+        "timezone": CELERY_TIMEZONE,
+        "enable_utc": CELERY_ENABLE_UTC,
+        "prefetch_multiplier": CELERY_WORKER_PREFETCH_MULTIPLIER,
+        "acks_late": CELERY_TASK_ACKS_LATE,
+        "reject_on_worker_lost": CELERY_TASK_REJECT_ON_WORKER_LOST,
+        "max_tasks_per_child": CELERY_WORKER_MAX_TASKS_PER_CHILD,
+        "max_memory_per_child": CELERY_WORKER_MAX_MEMORY_PER_CHILD,
+        "concurrency": CELERY_WORKER_CONCURRENCY,
+        "enable_beat": ENABLE_BEAT,
+        "enable_beat_heartbeat": ENABLE_BEAT_HEARTBEAT,
+        "default_queue": CELERY_DEFAULT_QUEUE,
+        "imports_count": len(MODULES),
+        # DEV-M0: quick sanity
+        "tasks_registered": {
+            "devfactory.commercial.run_order": _has_task("devfactory.commercial.run_order"),
+            "ops.queue.watchdog": _has_task("ops.queue.watchdog"),
+            "ops.alerts.sla": _has_task("ops.alerts.sla"),
+        },
+    }
+
+
+def print_celery_env_summary() -> None:
     try:
-        return _refresh_mv_safely("market_rates_mv")
-    except Exception as e:
-        logging.getLogger(__name__).warning("market_rates_mv refresh skipped: %s", e)
-        return {"ok": True, "skipped": True, "reason": str(e)}
+        print(json.dumps(celery_env_summary(), ensure_ascii=False, indent=2))
+    except Exception:
+        pass
 
-# (опционально) совместимость для старого имени
-@celery.task(name="mv.refresh.freights_enriched")
-def refresh_freights_enriched():
-    """
-    На случай, если где-то остались вызовы старого таска.
-    Безопасно пропускаем, если такого MV нет.
-    """
-    try:
-        return _refresh_mv_safely("freights_enriched_mv")
-    except Exception as e:
-        logging.getLogger(__name__).warning("freights_enriched_mv refresh skipped: %s", e)
-        return {"ok": True, "skipped": True, "reason": str(e)}
 
 # ---------------------------------------------------------------------
-# NEW TASK: Hourly REFRESH vehicle_availability_mv (конкурентный)
+# Make sure critical modules are imported (import-safe)
 # ---------------------------------------------------------------------
-@celery.task(name="mv.refresh.vehicle_availability")
-def mv_refresh_vehicle_availability():
-    """
-    Обновляет доступность ТС:
-      REFRESH MATERIALIZED VIEW CONCURRENTLY public.vehicle_availability_mv;
 
-    Требования для CONCURRENTLY:
-      - уникальный индекс на vehicle_availability_mv(truck_id).
-    При ошибке выполняется безопасный fallback без CONCURRENTLY.
-    """
-    return _refresh_mv_safely("public.vehicle_availability_mv")
+# 1) register_tasks: anchors beat schedule and imports task modules (incl. ops) at app configure time
+try:
+    import src.worker.register_tasks  # noqa: F401
+except Exception:
+    pass
 
-# --- Регистрация внешних тасков FoxProFlow ---
-from src.worker.register_tasks import (
-    task_planner_nextload_search,
-    task_planner_hourly_replan_all,
-    task_forecast_refresh,
-)
+# 2) tasks_ops: MUST be importable so ops.* tasks are registered (prevents "unregistered task" spam)
+try:
+    import src.worker.tasks_ops  # noqa: F401
+except Exception:
+    pass
 
-# Регистрируем публичные имена задач (как было в проекте)
-celery.task(name="planner.nextload.search")(task_planner_nextload_search)
-celery.task(name="planner.hourly.replan.all")(task_planner_hourly_replan_all)
-celery.task(name="forecast.refresh")(task_forecast_refresh)
+# 3) DEV-M0: commercial loop tasks MUST be importable so devfactory.commercial.run_order is registered
+try:
+    import src.worker.tasks.devfactory_commercial  # noqa: F401
+except Exception:
+    pass
 
-# ---------------------------------------------------------------------
-# Расписание Celery Beat: единый источник правды — services/schedule.py
-# ---------------------------------------------------------------------
-from src.services.schedule import BEAT_SCHEDULE
-celery.conf.beat_schedule = BEAT_SCHEDULE
+# 4) Optional: force bind confirm (used by entrypoints / task name normalization)
+try:
+    from src.worker.ff_force_bind_confirm import *  # noqa: F401,F403
+except Exception:
+    pass
 
-# Часовой пояс для beat. Можно переопределить ENV CELERY_TIMEZONE.
-celery.conf.timezone = os.getenv("CELERY_TIMEZONE", "UTC")
+
+__all__ = ["app", "celery_env_summary", "print_celery_env_summary"]

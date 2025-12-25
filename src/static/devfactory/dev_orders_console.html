@@ -1,0 +1,1183 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>FoxProFlow • DevOrders Console</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    /* ... CSS идентичен предыдущей версии, опускаю комментарий здесь
+       (он совпадает с тем, что уже в файле: палитра, панели, сетки) */
+    :root {
+      --bg: #050608;
+      --bg-alt: #0b0f14;
+      --panel: #10151f;
+      --panel-alt: #151c27;
+      --border: #222b3a;
+      --accent: #ff7a3c;
+      --accent-soft: rgba(255, 122, 60, 0.14);
+      --accent-strong: rgba(255, 122, 60, 0.25);
+      --text: #f5f7ff;
+      --text-muted: #9ca7c0;
+      --danger: #ff4d4f;
+      --success: #42be65;
+      --radius-lg: 14px;
+      --radius-sm: 8px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        sans-serif;
+      background: radial-gradient(circle at top left, #161b2b 0, #050608 55%);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+    }
+    header {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(
+        to right,
+        rgba(11, 15, 20, 0.95),
+        rgba(10, 14, 20, 0.8)
+      );
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      backdrop-filter: blur(12px);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .brand-mark {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: radial-gradient(
+        circle at 30% 30%,
+        #ffd2b3,
+        #ff7a3c 45%,
+        #ff4b16 75%
+      );
+      box-shadow: 0 0 18px rgba(255, 122, 60, 0.55);
+      position: relative;
+      overflow: hidden;
+    }
+    .brand-mark::after {
+      content: "";
+      position: absolute;
+      inset: 5px 6px 6px 8px;
+      border-radius: 50%;
+      background: radial-gradient(
+        circle at 20% 20%,
+        transparent 0,
+        transparent 40%,
+        rgba(0, 0, 0, 0.8) 75%
+      );
+    }
+    .brand-title {
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+    }
+    .brand-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 11px;
+      color: var(--text-muted);
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .pill {
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(8, 12, 18, 0.95);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .pill-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 8px rgba(66, 190, 101, 0.9);
+    }
+    .pill-small {
+      border-radius: 999px;
+      padding: 2px 8px;
+      border: 1px solid rgba(48, 60, 87, 0.9);
+      background: rgba(11, 16, 25, 0.98);
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+    main {
+      padding: 16px 20px 20px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.1fr);
+      gap: 16px;
+      align-items: flex-start;
+    }
+    @media (max-width: 1100px) {
+      main {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+    .panel {
+      background: linear-gradient(
+        145deg,
+        rgba(16, 21, 31, 0.98),
+        rgba(9, 13, 20, 0.98)
+      );
+      border-radius: var(--radius-lg);
+      border: 1px solid rgba(28, 38, 55, 0.85);
+      box-shadow:
+        0 24px 40px rgba(0, 0, 0, 0.65),
+        0 0 0 1px rgba(155, 168, 204, 0.04);
+      padding: 14px 14px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 0;
+    }
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 4px;
+    }
+    .panel-title {
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .panel-title span.icon {
+      font-size: 14px;
+    }
+    .panel-subtitle {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .panel-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .btn {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: rgba(9, 13, 21, 0.98);
+      color: var(--text);
+      padding: 5px 12px;
+      font-size: 11px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition:
+        background 0.1s ease-out,
+        transform 0.04s ease-out,
+        box-shadow 0.1s ease-out,
+        border-color 0.1s ease-out;
+    }
+    .btn.primary {
+      border-color: var(--accent);
+      background: radial-gradient(
+        circle at 0 0,
+        rgba(255, 204, 170, 0.07),
+        var(--accent-soft)
+      );
+      box-shadow: 0 0 0 1px rgba(255, 122, 60, 0.35);
+    }
+    .btn:active {
+      transform: translateY(1px);
+      box-shadow: none;
+    }
+    .btn[disabled] {
+      opacity: 0.6;
+      cursor: default;
+      box-shadow: none;
+    }
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+    .filters .input {
+      min-width: 140px;
+      flex: 0 0 auto;
+    }
+    input[type="text"],
+    select {
+      border-radius: 999px;
+      border: 1px solid rgba(46, 59, 83, 0.9);
+      background: rgba(11, 15, 24, 0.98);
+      color: var(--text);
+      padding: 6px 9px;
+      font-size: 11px;
+      font-family: inherit;
+      outline: none;
+      transition:
+        border-color 0.12s ease-out,
+        box-shadow 0.12s ease-out,
+        background 0.12s ease-out;
+    }
+    input::placeholder { color: var(--text-muted); }
+    input:focus,
+    select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(255, 122, 60, 0.4);
+      background: rgba(11, 16, 26, 0.98);
+    }
+    .orders-container {
+      border-radius: var(--radius-sm);
+      background: rgba(9, 13, 23, 0.9);
+      border: 1px solid rgba(40, 52, 76, 0.9);
+      overflow: hidden;
+      min-height: 150px;
+      max-height: 440px;
+      display: flex;
+      flex-direction: column;
+    }
+    .orders-header-row,
+    .orders-row {
+      display: grid;
+      grid-template-columns: 0.55fr 0.85fr 0.5fr 0.7fr 0.7fr;
+      gap: 8px;
+      align-items: center;
+      padding: 6px 10px;
+      font-size: 11px;
+    }
+    @media (max-width: 1200px) {
+      .orders-header-row,
+      .orders-row {
+        grid-template-columns: 0.6fr 0.9fr 0.7fr;
+      }
+      .col-amount,
+      .col-dates {
+        display: none;
+      }
+    }
+    .orders-header-row {
+      background: rgba(15, 20, 32, 0.95);
+      border-bottom: 1px solid rgba(46, 59, 83, 0.9);
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .orders-body { overflow: auto; }
+    .orders-row {
+      cursor: pointer;
+      border-bottom: 1px solid rgba(22, 31, 47, 0.9);
+    }
+    .orders-row:last-child { border-bottom: none; }
+    .orders-row:hover {
+      background: linear-gradient(
+        to right,
+        rgba(255, 122, 60, 0.08),
+        rgba(9, 13, 23, 0.95)
+      );
+    }
+    .orders-row.selected {
+      background: linear-gradient(
+        to right,
+        rgba(255, 122, 60, 0.19),
+        rgba(9, 13, 25, 0.95)
+      );
+      box-shadow: inset 2px 0 0 var(--accent);
+    }
+    .muted { color: var(--text-muted); }
+    .mono {
+      font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo,
+        Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 11px;
+    }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 9px;
+      border-radius: 999px;
+      font-size: 10px;
+      border: 1px solid rgba(69, 84, 115, 0.9);
+      background: rgba(15, 21, 31, 0.95);
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+    .status-new {
+      border-color: var(--accent);
+      background: rgba(255, 122, 60, 0.1);
+      color: #ffd5c1;
+    }
+    .status-analysis,
+    .status-proposal {
+      border-color: #38bdf8;
+      background: rgba(56, 189, 248, 0.1);
+      color: #bae6fd;
+    }
+    .status-progress {
+      border-color: #facc15;
+      background: rgba(250, 204, 21, 0.08);
+      color: #fef9c3;
+    }
+    .status-done {
+      border-color: var(--success);
+      background: rgba(66, 190, 101, 0.09);
+      color: #bbf7d0;
+    }
+    .status-failed {
+      border-color: var(--danger);
+      background: rgba(248, 113, 113, 0.09);
+      color: #fecaca;
+    }
+    .badge {
+      border-radius: 999px;
+      padding: 2px 8px;
+      border: 1px solid rgba(39, 52, 82, 0.9);
+      background: rgba(9, 13, 23, 0.96);
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+    .details-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 10px;
+    }
+    .details-section {
+      border-radius: var(--radius-sm);
+      background: rgba(9, 13, 23, 0.9);
+      border: 1px solid rgba(40, 52, 76, 0.9);
+      padding: 10px 10px 8px;
+      font-size: 11px;
+    }
+    .details-section header {
+      padding: 0 0 6px;
+      margin: 0 0 6px;
+      border: none;
+      justify-content: space-between;
+      background: transparent;
+      display: flex;
+      align-items: center;
+    }
+    .details-section header h3 {
+      margin: 0;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+    }
+    .details-row {
+      display: grid;
+      grid-template-columns: 120px minmax(0, 1fr);
+      gap: 4px 8px;
+      margin-bottom: 4px;
+    }
+    .details-row-label { color: var(--text-muted); }
+    .details-row-value { word-break: break-word; }
+    .hint {
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+    .tasks-mini-table {
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(40, 52, 76, 0.9);
+      background: rgba(5, 9, 18, 0.95);
+      max-height: 200px;
+      overflow: auto;
+    }
+    .tasks-mini-header,
+    .tasks-mini-row {
+      display: grid;
+      grid-template-columns: 0.45fr 0.7fr 0.5fr 0.5fr;
+      gap: 6px;
+      padding: 4px 8px;
+      font-size: 10px;
+      align-items: center;
+    }
+    .tasks-mini-header {
+      border-bottom: 1px solid rgba(40, 52, 76, 0.9);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      background: rgba(11, 15, 24, 0.98);
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    .tasks-mini-row {
+      border-bottom: 1px solid rgba(18, 24, 38, 0.9);
+      cursor: pointer;
+    }
+    .tasks-mini-row:last-child { border-bottom: none; }
+    .tasks-mini-row:hover {
+      background: linear-gradient(
+        to right,
+        rgba(255, 122, 60, 0.14),
+        rgba(9, 13, 23, 0.98)
+      );
+    }
+    .log {
+      font-size: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", "Courier New", monospace;
+      color: var(--text-muted);
+      opacity: 0.85;
+    }
+    .log .error { color: var(--danger); }
+    .log .ok { color: var(--success); }
+    footer {
+      padding: 6px 18px 10px;
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      border-top: 1px solid rgba(15, 23, 42, 0.9);
+      background: radial-gradient(
+        circle at 50% 0,
+        rgba(15, 23, 42, 0.94),
+        rgba(2, 6, 23, 1)
+      );
+    }
+    footer span { white-space: nowrap; }
+    footer .footer-left {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    footer .footer-right {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="brand-mark"></div>
+    <div>
+      <div class="brand-title">DevFactory • DevOrders</div>
+      <div class="brand-sub">FoxProFlow DevFactory · Orders & Pipelines</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="pill">
+      <span class="pill-dot"></span>
+      <span>API <span class="mono">/api/devorders</span></span>
+    </div>
+    <div class="pill-small">
+      Local · <span class="mono">http://localhost:8080</span>
+    </div>
+  </div>
+</header>
+
+<main>
+  <!-- Левая панель: список DevOrders -->
+  <section class="panel">
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">
+          <span class="icon">📦</span>
+          <span>Список DevOrders</span>
+        </div>
+        <div class="panel-subtitle">
+          Заказы DevFactory, статусы и базовый контекст. Клик по строке — детали справа.
+        </div>
+      </div>
+      <div class="panel-actions">
+        <button class="btn" id="btn-refresh">Обновить</button>
+        <span class="badge">Всего: <span id="orders-count" class="mono">0</span></span>
+      </div>
+    </div>
+
+    <!-- Фильтры -->
+    <div class="filters">
+      <input
+        type="text"
+        id="filter-q"
+        class="input"
+        placeholder="Фильтр по ID / заголовку / клиенту"
+      />
+      <select id="filter-status" class="input">
+        <option value="">Статус: любой</option>
+        <option value="new">new</option>
+        <option value="analysis">analysis</option>
+        <option value="proposal">proposal</option>
+        <option value="in_progress">in_progress</option>
+        <option value="awaiting_review">awaiting_review</option>
+        <option value="completed">completed</option>
+        <option value="delivered">delivered</option>
+        <option value="paid">paid</option>
+        <option value="archived">archived</option>
+        <option value="cancelled">cancelled</option>
+        <option value="failed">failed</option>
+      </select>
+      <input
+        type="text"
+        id="filter-customer"
+        class="input"
+        placeholder="Клиент (customer_name)"
+      />
+      <input
+        type="text"
+        id="filter-devorder-id"
+        class="input"
+        placeholder="DevOrder public_id (DO-...)"
+      />
+    </div>
+
+    <!-- Список DevOrders -->
+    <div class="orders-container">
+      <div class="orders-header-row">
+        <div>ID</div>
+        <div>Заголовок / Клиент</div>
+        <div>Статус</div>
+        <div class="col-amount">Сумма</div>
+        <div class="col-dates">Создан / Обновлён</div>
+      </div>
+      <div class="orders-body" id="orders-body">
+        <!-- строки добавляет JS -->
+      </div>
+    </div>
+
+    <div class="hint">
+      Жизненный цикл DevOrder описан в
+      <span class="mono">DevFactory_DevOrders_Lifecycle_v1.0</span>.
+      UI пока не меняет статусы, а только отображает и связывает заказы с задачами DevFactory.
+    </div>
+  </section>
+
+  <!-- Правая панель: детали DevOrder + задачи + CRM/Billing -->
+  <section class="panel">
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">
+          <span class="icon">🔍</span>
+          <span>DevOrder · детали, задачи, контекст</span>
+        </div>
+        <div class="panel-subtitle">
+          Паспорт заказа, связанные DevTasks, CRM/Billing-контекст (read-only).
+        </div>
+      </div>
+      <div class="panel-actions">
+        <span class="badge">Текущий DevOrder: <span id="current-order-id" class="mono">—</span></span>
+      </div>
+    </div>
+
+    <div class="details-grid">
+      <!-- Основная информация -->
+      <div class="details-section">
+        <header>
+          <h3>Основная информация</h3>
+        </header>
+        <div id="details-main">
+          <div class="hint">
+            Выберите DevOrder слева, чтобы увидеть паспорт и связи.
+          </div>
+        </div>
+      </div>
+
+      <!-- Связанные DevTasks -->
+      <div class="details-section">
+        <header>
+          <h3>Связанные DevTasks</h3>
+        </header>
+        <div id="details-tasks">
+          <div class="hint">
+            Для выбранного DevOrder будут загружены задачи DevFactory с привязкой по
+            <span class="mono">dev_order_id</span>.  
+            Клик по задаче откроет DevTasks Console с этим DevOrder в новой вкладке.
+          </div>
+        </div>
+      </div>
+
+      <!-- CRM / Billing / Commercial-context -->
+      <div class="details-section">
+        <header>
+          <h3>CRM / Billing / Commercial-context</h3>
+        </header>
+        <div id="details-context">
+          <div class="hint">
+            Для выбранного DevOrder будет запрошен commercial-context из
+            <span class="mono">/api/devorders/{id}/commercial-context</span>
+            (если поддерживается backend).
+          </div>
+        </div>
+        <div class="log" id="details-log"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="footer-left">
+    <span>FoxProFlow DevFactory</span>
+    <span class="muted">DevOrders Console · v1.0</span>
+  </div>
+  <div class="footer-right">
+    <span class="muted">Источник данных: /api/devorders, /api/devfactory/tasks, /api/devorders/{id}/commercial-context</span>
+  </div>
+</footer>
+
+<script>
+  const API_BASE = "";
+
+  const ordersBodyEl = document.getElementById("orders-body");
+  const ordersCountEl = document.getElementById("orders-count");
+  const btnRefresh = document.getElementById("btn-refresh");
+
+  const filterQEl = document.getElementById("filter-q");
+  const filterStatusEl = document.getElementById("filter-status");
+  const filterCustomerEl = document.getElementById("filter-customer");
+  const filterDevOrderPublicIdEl = document.getElementById("filter-devorder-id");
+
+  const currentOrderIdEl = document.getElementById("current-order-id");
+  const detailsMainEl = document.getElementById("details-main");
+  const detailsTasksEl = document.getElementById("details-tasks");
+  const detailsContextEl = document.getElementById("details-context");
+  const detailsLogEl = document.getElementById("details-log");
+
+  let lastOrders = [];
+  let currentOrderId = null;
+  let currentOrderPublicId = null;
+
+  function clearChildren(el) {
+    while (el.firstChild) {
+      el.removeChild(el.firstChild);
+    }
+  }
+
+  function fmtDate(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleString();
+  }
+
+  function fmtAmount(amount, currency) {
+    if (amount == null || amount === "") return "—";
+    const num = Number(amount);
+    const base = isNaN(num) ? amount : num.toLocaleString("ru-RU");
+    return currency ? base + " " + currency : base;
+  }
+
+  function statusClass(status) {
+    const s = (status || "").toLowerCase();
+    if (s === "new") return "status-pill status-new";
+    if (s === "analysis" || s === "proposal") return "status-pill status-analysis";
+    if (s === "in_progress" || s === "awaiting_review") return "status-pill status-progress";
+    if (s === "completed" || s === "delivered" || s === "paid")
+      return "status-pill status-done";
+    if (s === "failed" || s === "cancelled") return "status-pill status-failed";
+    if (s === "archived") return "status-pill";
+    return "status-pill";
+  }
+
+  function normalizeOrdersResponse(data) {
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data.orders)) return data.orders;
+    if (Array.isArray(data.items)) return data.items;
+    if (Array.isArray(data.results)) return data.results;
+    return [];
+  }
+
+  function normalizeOrderFields(order) {
+    const o = order || {};
+    const meta = o.meta || o.meta_json || {};
+
+    const id = o.id ?? o.dev_order_id ?? null;
+    const publicId = o.dev_order_public_id ?? o.public_id ?? o.order_public_id ?? "—";
+    const title = o.title ?? o.order_title ?? o.summary ?? "(без заголовка)";
+    const customer = o.customer_name ?? o.client_name ?? o.tenant_name ?? "—";
+    const status = o.status ?? o.order_status ?? "unknown";
+
+    const totalAmount = o.total_amount ?? meta.total_amount ?? null;
+    const currency = o.currency_code ?? o.currency ?? meta.currency_code ?? null;
+
+    const createdAt = o.created_at ?? o.created ?? o.ts_created ?? meta.created_at ?? null;
+    const updatedAt = o.updated_at ?? o.updated ?? o.ts_updated ?? meta.updated_at ?? null;
+
+    const crmTenant = o.crm_tenant ?? meta.crm_tenant ?? meta.tenant_id ?? null;
+    const crmLead = o.crm_lead ?? meta.crm_lead ?? meta.lead_code ?? null;
+    const billingId =
+      o.billing_invoice_id ??
+      o.billing_subscription_id ??
+      meta.billing_invoice_id ??
+      meta.billing_subscription_id ??
+      null;
+
+    return {
+      id,
+      publicId,
+      title,
+      customer,
+      status,
+      totalAmount,
+      currency,
+      createdAt,
+      updatedAt,
+      crmTenant,
+      crmLead,
+      billingId,
+      raw: order,
+      meta,
+    };
+  }
+
+  function applyLocalFilter(orders) {
+    const text = (filterQEl?.value || "").trim().toLowerCase();
+    const customer = (filterCustomerEl?.value || "").trim().toLowerCase();
+    const publicId = (filterDevOrderPublicIdEl?.value || "").trim().toLowerCase();
+
+    let list = orders.slice();
+
+    if (text) {
+      list = list.filter((o) => {
+        const inId = String(o.id ?? "").toLowerCase().includes(text);
+        const inTitle = (o.title || "").toLowerCase().includes(text);
+        const inCustomer = (o.customer || "").toLowerCase().includes(text);
+        return inId || inTitle || inCustomer;
+      });
+    }
+
+    if (customer) {
+      list = list.filter((o) => (o.customer || "").toLowerCase().includes(customer));
+    }
+
+    if (publicId) {
+      list = list.filter((o) => (o.publicId || "").toLowerCase().includes(publicId));
+    }
+
+    return list;
+  }
+
+  function renderOrders(orders) {
+    clearChildren(ordersBodyEl);
+
+    if (!orders.length) {
+      const row = document.createElement("div");
+      row.className = "orders-row";
+      row.innerHTML =
+        '<div class="muted">DevOrders не найдены по текущему фильтру.</div>';
+      ordersBodyEl.appendChild(row);
+      return;
+    }
+
+    for (const o of orders) {
+      const row = document.createElement("div");
+      row.className = "orders-row";
+      row.dataset.orderId = o.id;
+
+      const statusCls = statusClass(o.status);
+
+      row.innerHTML = `
+        <div>
+          <div class="mono">${o.publicId}</div>
+          <div class="mono muted">${o.id ?? "—"}</div>
+        </div>
+        <div>
+          <div>${o.title}</div>
+          <div class="muted">${o.customer}</div>
+        </div>
+        <div>
+          <span class="${statusCls}">
+            <span class="status-dot"></span>${o.status}
+          </span>
+        </div>
+        <div class="col-amount mono">
+          ${fmtAmount(o.totalAmount, o.currency)}
+        </div>
+        <div class="col-dates mono">
+          <div>${fmtDate(o.createdAt)}</div>
+          <div class="muted">${fmtDate(o.updatedAt)}</div>
+        </div>
+      `;
+
+      row.addEventListener("click", () => {
+        selectOrderRow(o.id, o.publicId);
+        loadOrderDetails(o.id, o.publicId);
+      });
+
+      ordersBodyEl.appendChild(row);
+    }
+
+    if (!currentOrderId && orders.length > 0) {
+      const first = orders[0];
+      selectOrderRow(first.id, first.publicId);
+      loadOrderDetails(first.id, first.publicId);
+    }
+  }
+
+  function selectOrderRow(orderId, publicId) {
+    currentOrderId = orderId;
+    currentOrderPublicId = publicId;
+    currentOrderIdEl.textContent = publicId || orderId || "—";
+    const rows = ordersBodyEl.querySelectorAll(".orders-row");
+    rows.forEach((row) => {
+      if (row.dataset.orderId === String(orderId)) {
+        row.classList.add("selected");
+      } else {
+        row.classList.remove("selected");
+      }
+    });
+    detailsLogEl.innerHTML = "";
+  }
+
+  async function loadOrders() {
+    if (!btnRefresh) return;
+    btnRefresh.disabled = true;
+
+    try {
+      const qs = [];
+      const status = filterStatusEl?.value || "";
+      if (status) qs.push("status=" + encodeURIComponent(status));
+      qs.push("limit=100");
+
+      const url = `${API_BASE}/api/devorders` + (qs.length ? "?" + qs.join("&") : "");
+      const res = await fetch(url, { method: "GET" });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      const rawList = normalizeOrdersResponse(data);
+      const normalized = rawList.map(normalizeOrderFields);
+      lastOrders = normalized;
+      ordersCountEl.textContent = String(normalized.length);
+
+      const locallyFiltered = applyLocalFilter(normalized);
+      renderOrders(locallyFiltered);
+    } catch (err) {
+      console.error("loadOrders error:", err);
+      ordersCountEl.textContent = "0";
+      lastOrders = [];
+      clearChildren(ordersBodyEl);
+      const row = document.createElement("div");
+      row.className = "orders-row";
+      row.innerHTML = `<div class="muted">Ошибка загрузки DevOrders: ${err.message}</div>`;
+      ordersBodyEl.appendChild(row);
+    } finally {
+      btnRefresh.disabled = false;
+    }
+  }
+
+  async function loadOrderDetails(orderId, publicId) {
+    if (!orderId && !publicId) return;
+
+    const order =
+      lastOrders.find((o) => o.id === orderId) ??
+      lastOrders.find((o) => o.publicId === publicId) ??
+      null;
+
+    if (order) {
+      renderOrderMain(order);
+    } else {
+      detailsMainEl.innerHTML =
+        '<div class="hint">DevOrder не найден в локальном списке.</div>';
+    }
+
+    await Promise.all([
+      loadOrderTasks(orderId, publicId),
+      loadOrderContext(orderId),
+    ]);
+  }
+
+  function renderOrderMain(order) {
+    const o = order;
+    const html = `
+      <div class="details-row">
+        <div class="details-row-label">DevOrder id</div>
+        <div class="details-row-value mono">${o.id ?? "—"}</div>
+      </div>
+      <div class="details-row">
+        <div class="details-row-label">Public id</div>
+        <div class="details-row-value mono">${o.publicId}</div>
+      </div>
+      <div class="details-row">
+        <div class="details-row-label">Статус</div>
+        <div class="details-row-value">
+          <span class="${statusClass(o.status)}">
+            <span class="status-dot"></span>${o.status}
+          </span>
+        </div>
+      </div>
+      <div class="details-row">
+        <div class="details-row-label">Заголовок</div>
+        <div class="details-row-value">${o.title}</div>
+      </div>
+      <div class="details-row">
+        <div class="details-row-label">Клиент</div>
+        <div class="details-row-value">${o.customer}</div>
+      </div>
+      <div class="details-row">
+        <div class="details-row-label">Сумма</div>
+        <div class="details-row-value mono">${fmtAmount(
+          o.totalAmount,
+          o.currency
+        )}</div>
+      </div>
+      <div class="details-row">
+        <div class="details-row-label">Создан</div>
+        <div class="details-row-value mono">${fmtDate(o.createdAt)}</div>
+      </div>
+      <div class="details-row">
+        <div class="details-row-label">Обновлён</div>
+        <div class="details-row-value mono">${fmtDate(o.updatedAt)}</div>
+      </div>
+    `;
+    detailsMainEl.innerHTML = html;
+  }
+
+  async function loadOrderTasks(orderId, publicId) {
+    clearChildren(detailsTasksEl);
+    const placeholder = document.createElement("div");
+    placeholder.className = "hint";
+    placeholder.textContent =
+      "Загружаем задачи DevFactory, связанные с этим DevOrder...";
+    detailsTasksEl.appendChild(placeholder);
+
+    try {
+      const qs = [];
+      if (publicId && publicId !== "—") {
+        qs.push("dev_order_id=" + encodeURIComponent(publicId));
+      } else if (orderId) {
+        qs.push("dev_order_id=" + encodeURIComponent(orderId));
+      }
+      qs.push("limit=100");
+
+      const url =
+        `${API_BASE}/api/devfactory/tasks` +
+        (qs.length ? "?" + qs.join("&") : "");
+      const res = await fetch(url, { method: "GET" });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      const arr = Array.isArray(data)
+        ? data
+        : Array.isArray(data.tasks)
+        ? data.tasks
+        : Array.isArray(data.items)
+        ? data.items
+        : [];
+      renderOrderTasks(arr, publicId);
+    } catch (err) {
+      console.error("loadOrderTasks error:", err);
+      detailsTasksEl.innerHTML = `<div class="hint">Ошибка загрузки задач DevFactory для DevOrder: ${err.message}</div>`;
+    }
+  }
+
+  function normalizeTaskForOrder(task) {
+    const t = task || {};
+    const meta = t.meta || t.meta_json || {};
+    const id = t.id ?? t.task_id ?? t.dev_task_id ?? null;
+    const status =
+      t.status ?? t.task_status ?? t.dev_task_status ?? "unknown";
+    const stack = t.stack ?? t.tech_stack ?? t.layer ?? "—";
+    const goal = t.goal ?? t.title ?? t.summary ?? "(без описания)";
+    return { id, status, stack, goal, meta };
+  }
+
+  function renderOrderTasks(tasks, devOrderPublicId) {
+    clearChildren(detailsTasksEl);
+
+    if (!tasks.length) {
+      detailsTasksEl.innerHTML =
+        '<div class="hint">Для этого DevOrder пока нет задач DevFactory (или backend не поддерживает фильтр по dev_order_id).</div>';
+      return;
+    }
+
+    const container = document.createElement("div");
+    container.className = "tasks-mini-table";
+
+    const header = document.createElement("div");
+    header.className = "tasks-mini-header";
+    header.innerHTML = `
+      <div>ID</div>
+      <div>Цель</div>
+      <div>Стек</div>
+      <div>Статус</div>
+    `;
+    container.appendChild(header);
+
+    for (const raw of tasks) {
+      const norm = normalizeTaskForOrder(raw);
+      const row = document.createElement("div");
+      row.className = "tasks-mini-row";
+
+      const statusCls = statusClass(norm.status);
+
+      row.innerHTML = `
+        <div class="mono">${norm.id ?? "—"}</div>
+        <div>${norm.goal}</div>
+        <div class="mono">${norm.stack}</div>
+        <div><span class="${statusCls}"><span class="status-dot"></span>${norm.status}</span></div>
+      `;
+
+      row.addEventListener("click", () => {
+        const devOrderIdForUrl = devOrderPublicId || "";
+        const url =
+          "/static/devfactory/devtasks_console.html?dev_order_id=" +
+          encodeURIComponent(devOrderIdForUrl);
+        window.open(url, "_blank");
+      });
+
+      container.appendChild(row);
+    }
+
+    detailsTasksEl.appendChild(container);
+  }
+
+  async function loadOrderContext(orderId) {
+    clearChildren(detailsContextEl);
+    detailsLogEl.innerHTML = "";
+
+    if (!orderId) {
+      detailsContextEl.innerHTML =
+        '<div class="hint">Нет технического ID DevOrder для запроса контекста.</div>';
+      return;
+    }
+
+    const placeholder = document.createElement("div");
+    placeholder.className = "hint";
+    placeholder.textContent =
+      "Пробуем получить commercial-context для DevOrder...";
+    detailsContextEl.appendChild(placeholder);
+
+    try {
+      const url =
+        `${API_BASE}/api/devorders/` +
+        encodeURIComponent(orderId) +
+        "/commercial-context";
+      const res = await fetch(url, { method: "GET" });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      const ctx = await res.json();
+      renderOrderContext(ctx);
+      detailsLogEl.innerHTML =
+        '<span class="ok">Commercial-context успешно получен из /api/devorders/' +
+        orderId +
+        "/commercial-context</span>";
+    } catch (err) {
+      console.error("loadOrderContext error:", err);
+      detailsContextEl.innerHTML =
+        '<div class="hint">Backend не вернул commercial-context (или endpoint не реализован). Это не ошибка жизненного цикла, просто фича ещё не включена.</div>';
+      detailsLogEl.innerHTML =
+        '<span class="error">Ошибка при запросе commercial-context: ' +
+        err.message +
+        "</span>";
+    }
+  }
+
+  function renderOrderContext(ctx) {
+    clearChildren(detailsContextEl);
+
+    const c = ctx || {};
+    const crm = c.crm || c.crm_context || {};
+    const billing = c.billing || c.billing_context || {};
+    const kpi = c.kpi || c.kpi_context || {};
+
+    const html = `
+      <div class="details-row">
+        <div class="details-row-label">CRM tenant</div>
+        <div class="details-row-value mono">
+          ${crm.tenant_name || crm.tenant_id || "—"}
+        </div>
+      </div>
+      <div class="details-row">
+        <div class="details-row-label">CRM lead</div>
+        <div class="details-row-value mono">
+          ${crm.lead_code || crm.lead_id || "—"}
+        </div>
+      </div>
+      <div class="details-row">
+        <div class="details-row-label">Billing</div>
+        <div class="details-row-value mono">
+          ${billing.invoice_code || billing.subscription_code || "—"}
+        </div>
+      </div>
+      <div class="details-row">
+        <div class="details-row-label">KPI кратко</div>
+        <div class="details-row-value">
+          ${kpi.summary || "—"}
+        </div>
+      </div>
+    `;
+
+    detailsContextEl.innerHTML = html;
+  }
+
+  function initEvents() {
+    if (btnRefresh) {
+      btnRefresh.addEventListener("click", () => {
+        loadOrders();
+      });
+    }
+
+    if (filterQEl) {
+      filterQEl.addEventListener("input", () => {
+        const locallyFiltered = applyLocalFilter(lastOrders);
+        renderOrders(locallyFiltered);
+      });
+    }
+
+    if (filterStatusEl) {
+      filterStatusEl.addEventListener("change", () => {
+        loadOrders();
+      });
+    }
+
+    if (filterCustomerEl) {
+      filterCustomerEl.addEventListener("input", () => {
+        const locallyFiltered = applyLocalFilter(lastOrders);
+        renderOrders(locallyFiltered);
+      });
+    }
+
+    if (filterDevOrderPublicIdEl) {
+      filterDevOrderPublicIdEl.addEventListener("input", () => {
+        const locallyFiltered = applyLocalFilter(lastOrders);
+        renderOrders(locallyFiltered);
+      });
+    }
+
+    window.addEventListener("load", () => {
+      loadOrders();
+    });
+  }
+
+  initEvents();
+</script>
+</body>
+</html>

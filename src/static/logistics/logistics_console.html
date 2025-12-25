@@ -1,0 +1,1312 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8" />
+    <title>FoxProFlow • Консоль логиста</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+        :root {
+            --bg: #05070a;
+            --bg-elevated: #0c1018;
+            --bg-elevated-2: #141923;
+            --border-subtle: #1f2430;
+            --accent: #3f8cff;
+            --accent-soft: rgba(63, 140, 255, 0.08);
+            --accent-strong: #5aa1ff;
+            --text-main: #f5f7ff;
+            --text-muted: #8c92a3;
+            --text-soft: #6b7280;
+            --danger: #ff4b6a;
+            --danger-soft: rgba(255, 75, 106, 0.14);
+            --success: #2ecc71;
+            --warning: #ffb020;
+            --radius-lg: 14px;
+            --radius-xl: 18px;
+            --shadow-soft: 0 18px 45px rgba(0, 0, 0, 0.65);
+            --shadow-soft-small: 0 10px 25px rgba(0, 0, 0, 0.55);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+                sans-serif;
+            background: radial-gradient(circle at top left, #111827 0, #020308 45%, #000 100%);
+            color: var(--text-main);
+            min-height: 100vh;
+        }
+
+        .page {
+            max-width: 1240px;
+            margin: 0 auto;
+            padding: 24px 18px 32px;
+        }
+
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 18px;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .brand-logo {
+            width: 30px;
+            height: 30px;
+            border-radius: 99px;
+            background: conic-gradient(from 210deg, #3f8cff, #00e0ff, #7c3aed, #3f8cff);
+            padding: 2px;
+        }
+
+        .brand-logo-inner {
+            width: 100%;
+            height: 100%;
+            border-radius: inherit;
+            background: radial-gradient(circle at 20% 0, #1d283a 0, #020308 80%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--accent-strong);
+        }
+
+        .brand-text-main {
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            font-size: 14px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+
+        .brand-text-sub {
+            font-size: 12px;
+            color: var(--text-soft);
+        }
+
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 12px;
+            color: var(--text-soft);
+        }
+
+        .pill {
+            border-radius: 999px;
+            border: 1px solid var(--border-subtle);
+            background: radial-gradient(circle at top, #1f2937 0, #020617 80%);
+            padding: 6px 12px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 999px;
+            background: var(--success);
+            box-shadow: 0 0 0 4px rgba(46, 204, 113, 0.16);
+        }
+
+        main {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .top-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 14px;
+        }
+
+        .card {
+            background: radial-gradient(circle at top, #111827 0, #020617 65%);
+            border-radius: var(--radius-xl);
+            border: 1px solid var(--border-subtle);
+            box-shadow: var(--shadow-soft);
+            padding: 14px 16px 16px;
+        }
+
+        .card-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            gap: 8px;
+        }
+
+        .card-title {
+            font-size: 13px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-soft);
+        }
+
+        .card-subtitle {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .date-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .field-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-soft);
+        }
+
+        .date-input-wrap {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--border-subtle);
+            background: radial-gradient(circle at top, #020617 0, #020308 80%);
+            font-size: 12px;
+            color: var(--text-main);
+        }
+
+        .date-input-wrap input[type="date"] {
+            background: transparent;
+            border: none;
+            color: var(--text-main);
+            font-size: 12px;
+            outline: none;
+        }
+
+        .date-input-wrap input[type="date"]::-webkit-calendar-picker-indicator {
+            filter: invert(0.8);
+        }
+
+        .btn {
+            border-radius: 999px;
+            border: none;
+            padding: 7px 14px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: background 0.15s ease, transform 0.05s ease,
+                box-shadow 0.1s ease;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+            color: #f9fafb;
+            box-shadow: 0 10px 28px rgba(63, 140, 255, 0.5);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 14px 40px rgba(63, 140, 255, 0.7);
+        }
+
+        .btn-ghost {
+            background: transparent;
+            color: var(--text-muted);
+            border: 1px solid var(--border-subtle);
+        }
+
+        .btn-ghost:hover {
+            background: rgba(15, 23, 42, 0.9);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: default;
+            box-shadow: none;
+            transform: none;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        @media (max-width: 960px) {
+            .stats-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        .stat-card {
+            background: linear-gradient(
+                145deg,
+                rgba(15, 23, 42, 0.96),
+                rgba(15, 23, 42, 0.98)
+            );
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border-subtle);
+            padding: 8px 10px 9px;
+            box-shadow: var(--shadow-soft-small);
+        }
+
+        .stat-label {
+            font-size: 11px;
+            color: var(--text-soft);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 4px;
+        }
+
+        .stat-value {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+
+        .stat-hint {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .stat-chip-row {
+            display: flex;
+            gap: 4px;
+            margin-top: 4px;
+            font-size: 10px;
+        }
+
+        .chip {
+            padding: 2px 6px;
+            border-radius: 999px;
+            border: 1px solid var(--border-subtle);
+            background: rgba(15, 23, 42, 0.85);
+            color: var(--text-soft);
+        }
+
+        .chip-success {
+            border-color: rgba(46, 204, 113, 0.4);
+            color: var(--success);
+        }
+
+        .chip-warning {
+            border-color: rgba(255, 176, 32, 0.5);
+            color: var(--warning);
+        }
+
+        .chip-danger {
+            border-color: rgba(255, 75, 106, 0.6);
+            color: var(--danger);
+        }
+
+        .table-wrap {
+            border-radius: var(--radius-xl);
+            border: 1px solid var(--border-subtle);
+            background: radial-gradient(circle at top, #020617 0, #020308 74%);
+            box-shadow: var(--shadow-soft);
+            overflow: hidden;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        thead {
+            background: radial-gradient(circle at top, #020617 0, #020308 80%);
+        }
+
+        th,
+        td {
+            padding: 8px 10px;
+            text-align: left;
+            border-bottom: 1px solid rgba(31, 41, 55, 0.7);
+        }
+
+        th {
+            font-size: 11px;
+            color: var(--text-soft);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        tbody tr {
+            background: rgba(15, 23, 42, 0.9);
+        }
+
+        tbody tr:nth-child(even) {
+            background: rgba(15, 23, 42, 0.96);
+        }
+
+        tbody tr:hover {
+            background: rgba(31, 41, 55, 0.92);
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 9px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 500;
+            border: 1px solid transparent;
+        }
+
+        .status-dot-small {
+            width: 7px;
+            height: 7px;
+            border-radius: 999px;
+        }
+
+        .status-planned {
+            background: rgba(59, 130, 246, 0.14);
+            border-color: rgba(59, 130, 246, 0.35);
+            color: #bfdbfe;
+        }
+
+        .status-planned .status-dot-small {
+            background: #3b82f6;
+        }
+
+        .status-in-progress {
+            background: rgba(16, 185, 129, 0.15);
+            border-color: rgba(16, 185, 129, 0.45);
+            color: #a7f3d0;
+        }
+
+        .status-in-progress .status-dot-small {
+            background: #10b981;
+        }
+
+        .status-delayed {
+            background: var(--danger-soft);
+            border-color: rgba(248, 113, 113, 0.7);
+            color: #fecaca;
+        }
+
+        .status-delayed .status-dot-small {
+            background: #f97373;
+        }
+
+        .delay-text {
+            font-variant-numeric: tabular-nums;
+        }
+
+        .delay-text.positive {
+            color: var(--danger);
+        }
+
+        .delay-text.zero {
+            color: var(--text-muted);
+        }
+
+        .footer-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 14px;
+            margin-top: 14px;
+        }
+
+        @media (max-width: 960px) {
+            .footer-row {
+                flex-direction: column;
+            }
+        }
+
+        .autoplan-card {
+            flex: 1.3;
+        }
+
+        .event-log-card {
+            flex: 1;
+        }
+
+        .log-area {
+            margin-top: 8px;
+            padding: 8px 10px;
+            border-radius: var(--radius-lg);
+            border: 1px dashed rgba(55, 65, 81, 0.8);
+            background: radial-gradient(circle at top left, #020617 0, #020308 76%);
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+                "Liberation Mono", "Courier New", monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+            max-height: 140px;
+            overflow: auto;
+            white-space: pre-wrap;
+        }
+
+        .log-line {
+            margin-bottom: 2px;
+        }
+
+        .log-line strong {
+            color: var(--accent-strong);
+        }
+
+        .muted {
+            color: var(--text-soft);
+            font-size: 11px;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 2px 8px;
+            font-size: 11px;
+            border-radius: 999px;
+            border: 1px solid var(--border-subtle);
+            background: rgba(15, 23, 42, 0.9);
+            color: var(--text-soft);
+        }
+
+        .badge-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 999px;
+            background: var(--accent);
+        }
+
+        .select-input {
+            background: radial-gradient(circle at top, #020617 0, #020308 80%);
+            border-radius: 999px;
+            border: 1px solid var(--border-subtle);
+            padding: 5px 10px;
+            font-size: 12px;
+            color: var(--text-main);
+            outline: none;
+        }
+
+        .select-input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 1px rgba(63, 140, 255, 0.4);
+        }
+
+        .select-input option {
+            background: #020617;
+            color: var(--text-main);
+        }
+
+        /* KPI block */
+        .kpi-summary {
+            margin-top: 6px;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .kpi-table-wrap {
+            margin-top: 8px;
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border-subtle);
+            background: radial-gradient(circle at top, #020617 0, #020308 80%);
+            overflow: hidden;
+        }
+
+        .kpi-table-wrap table {
+            font-size: 11px;
+        }
+
+        .kpi-error {
+            margin-top: 6px;
+            font-size: 11px;
+            color: #fecaca;
+        }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <header>
+            <div class="brand">
+                <div class="brand-logo">
+                    <div class="brand-logo-inner">F</div>
+                </div>
+                <div>
+                    <div class="brand-text-main">FoxProFlow • Logistics</div>
+                    <div class="brand-text-sub">
+                        Консоль оператора логистики · Rolling Horizon + KPI
+                    </div>
+                </div>
+            </div>
+            <div class="header-controls">
+                <div class="pill">
+                    <div class="status-dot"></div>
+                    <span>Стек готов к работе</span>
+                </div>
+            </div>
+        </header>
+
+        <main>
+            <div class="top-row">
+                <!-- Карта 1: Дата и управление -->
+                <section class="card">
+                    <div class="card-header">
+                        <div>
+                            <div class="card-title">Дата и управление</div>
+                            <div class="card-subtitle">
+                                Выберите дату рейсов — консоль сама подтянет данные
+                                из /api/trips/operator/overview.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="date-row" style="margin-bottom: 10px;">
+                        <div>
+                            <div class="field-label">Дата рейсов</div>
+                            <div class="date-input-wrap">
+                                <input type="date" id="date-input" />
+                            </div>
+                        </div>
+                        <div>
+                            <button class="btn btn-primary" id="refresh-btn">
+                                Обновить данные
+                            </button>
+                        </div>
+                    </div>
+                    <div class="muted">
+                        Консоль автоматически подставляет дату в URL и в запрос
+                        к /api/trips/operator/overview.
+                    </div>
+                </section>
+
+                <!-- Карта 2: Сводка по рейсам -->
+                <section class="card">
+                    <div class="card-header">
+                        <div>
+                            <div class="card-title">Сводка по рейсам</div>
+                            <div class="card-subtitle">
+                                Всего рейсов, план, в работе, с задержкой и суммарная задержка.
+                            </div>
+                        </div>
+                        <div class="badge">
+                            <span class="badge-dot"></span>
+                            <span id="summary-date-label">–</span>
+                        </div>
+                    </div>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-label">Всего рейсов</div>
+                            <div class="stat-value" id="stat-total">–</div>
+                            <div class="stat-hint">Рейсы по выбранной дате</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">План</div>
+                            <div class="stat-value" id="stat-planned">–</div>
+                            <div class="stat-hint">Статус: planned</div>
+                            <div class="stat-chip-row">
+                                <span class="chip chip-success">Окно погрузки впереди</span>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">В работе</div>
+                            <div class="stat-value" id="stat-in-progress">–</div>
+                            <div class="stat-hint">Статус: in_progress</div>
+                            <div class="stat-chip-row">
+                                <span class="chip chip-warning">На линии</span>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">С задержкой</div>
+                            <div class="stat-value" id="stat-delayed">–</div>
+                            <div class="stat-hint">
+                                Статус: delayed, мин: <span id="stat-delay-total">–</span>
+                            </div>
+                            <div class="stat-chip-row">
+                                <span class="chip chip-danger">Требует внимания</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Карта 3: On-Time Delivery KPI -->
+                <section class="card">
+                    <div class="card-header">
+                        <div>
+                            <div class="card-title">On-Time Delivery KPI</div>
+                            <div class="card-subtitle">
+                                Доля доставок вовремя за выбранный период
+                                /api/logistics/kpi/ontime/daily/recent.
+                            </div>
+                        </div>
+                        <div class="date-row">
+                            <div>
+                                <div class="field-label">Период</div>
+                                <select id="kpi-days" class="select-input">
+                                    <option value="7">7 дней</option>
+                                    <option value="14">14 дней</option>
+                                    <option value="30">30 дней</option>
+                                </select>
+                            </div>
+                            <div>
+                                <button class="btn btn-ghost" id="kpi-refresh-btn">
+                                    Обновить KPI
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-label">Всего доставок</div>
+                            <div class="stat-value" id="kpi-total">–</div>
+                            <div class="stat-hint">За период</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Вовремя</div>
+                            <div class="stat-value" id="kpi-on-time">–</div>
+                            <div class="stat-hint">delivery_actual_at ≤ planned</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">С опозданием</div>
+                            <div class="stat-value" id="kpi-late">–</div>
+                            <div class="stat-hint">delivery_actual_at &gt; planned</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">On-Time, %</div>
+                            <div class="stat-value" id="kpi-pct">–</div>
+                            <div class="stat-hint">Глобальный по периоду</div>
+                        </div>
+                    </div>
+                    <div class="kpi-summary" id="kpi-summary">
+                        KPI ещё не загружен.
+                    </div>
+                    <div class="kpi-table-wrap">
+                        <table>
+                            <thead>
+                            <tr>
+                                <th>День</th>
+                                <th>Всего</th>
+                                <th>Вовремя</th>
+                                <th>С опозданием</th>
+                                <th>On-Time, %</th>
+                            </tr>
+                            </thead>
+                            <tbody id="kpi-body">
+                            <tr>
+                                <td colspan="5" style="text-align:center;padding:10px;">
+                                    Нет данных. Нажмите «Обновить KPI».
+                                </td>
+                            </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="kpi-error" id="kpi-error"></div>
+                </section>
+            </div>
+
+            <!-- Таблица рейсов -->
+            <section class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Рейс</th>
+                            <th>Машина</th>
+                            <th>Маршрут</th>
+                            <th>Окно погрузки</th>
+                            <th>Окно выгрузки</th>
+                            <th>Статус</th>
+                            <th>Задержка, мин</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trips-body">
+                        <tr>
+                            <td colspan="7" style="text-align: center; padding: 14px;">
+                                Загрузка данных…
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Автоплан + системные события -->
+            <div class="footer-row">
+                <section class="card autoplan-card">
+                    <div class="card-header">
+                        <div>
+                            <div class="card-title">Автоплан рейсов</div>
+                            <div class="card-subtitle">
+                                Запуск Rolling Horizon для выбранной даты через /api/trips/plan.
+                            </div>
+                        </div>
+                        <div class="badge" id="autoplan-status-badge">
+                            <span class="badge-dot"></span>
+                            <span id="autoplan-status-text">Готов к запуску</span>
+                        </div>
+                    </div>
+                    <div class="date-row" style="margin-bottom: 8px;">
+                        <div>
+                            <div class="field-label">Окно автоплана</div>
+                            <select id="autoplan-window" class="select-input">
+                                <option value="day">Только выбранный день</option>
+                                <option value="rolling24">Скользящее окно 24 ч</option>
+                                <option value="custom">Пользовательское окно</option>
+                            </select>
+                        </div>
+                        <div>
+                            <button class="btn btn-primary" id="autoplan-btn">
+                                Запустить автоплан
+                            </button>
+                        </div>
+                    </div>
+                    <div class="log-area" id="autoplan-log">
+                        Нажмите «Запустить автоплан», чтобы увидеть ответ
+                        от <code>/api/trips/plan</code> и результат расчёта маршрутов.
+                    </div>
+                </section>
+
+                <section class="card event-log-card">
+                    <div class="card-header">
+                        <div>
+                            <div class="card-title">Системные события</div>
+                            <div class="card-subtitle">
+                                Окно для сообщений консоли логиста и статусов запросов.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="log-area" id="event-log"></div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        (function () {
+            const apiBase = window.location.origin;
+
+            const dateInput = document.getElementById("date-input");
+            const refreshBtn = document.getElementById("refresh-btn");
+            const summaryDateLabel = document.getElementById("summary-date-label");
+
+            const statTotal = document.getElementById("stat-total");
+            const statPlanned = document.getElementById("stat-planned");
+            const statInProgress = document.getElementById("stat-in-progress");
+            const statDelayed = document.getElementById("stat-delayed");
+            const statDelayTotal = document.getElementById("stat-delay-total");
+
+            const tripsBody = document.getElementById("trips-body");
+
+            const autoplanBtn = document.getElementById("autoplan-btn");
+            const autoplanLog = document.getElementById("autoplan-log");
+            const autoplanWindow = document.getElementById("autoplan-window");
+            const autoplanStatusText = document.getElementById("autoplan-status-text");
+
+            const eventLog = document.getElementById("event-log");
+
+            // KPI DOM
+            const kpiDaysSelect = document.getElementById("kpi-days");
+            const kpiRefreshBtn = document.getElementById("kpi-refresh-btn");
+            const kpiBody = document.getElementById("kpi-body");
+            const kpiSummary = document.getElementById("kpi-summary");
+            const kpiError = document.getElementById("kpi-error");
+            const kpiTotalEl = document.getElementById("kpi-total");
+            const kpiOnTimeEl = document.getElementById("kpi-on-time");
+            const kpiLateEl = document.getElementById("kpi-late");
+            const kpiPctEl = document.getElementById("kpi-pct");
+
+            function logEvent(msg) {
+                if (!eventLog) return;
+                const line = document.createElement("div");
+                line.className = "log-line";
+                const ts = new Date().toLocaleTimeString();
+                line.innerHTML = `<strong>[${ts}]</strong> ${msg}`;
+                eventLog.prepend(line);
+            }
+
+            function formatDateYMD(date) {
+                const d = new Date(date);
+                const y = d.getFullYear();
+                const m = String(d.getMonth() + 1).padStart(2, "0");
+                const day = String(d.getDate()).padStart(2, "0");
+                return `${y}-${m}-${day}`;
+            }
+
+            function initDateFromUrlOrToday() {
+                const params = new URLSearchParams(window.location.search);
+                const qDate = params.get("date");
+                const todayYmd = formatDateYMD(new Date());
+                if (dateInput) {
+                    dateInput.value = qDate || todayYmd;
+                }
+                if (summaryDateLabel) {
+                    summaryDateLabel.textContent = (dateInput && dateInput.value) || "–";
+                }
+            }
+
+            function updateUrlWithDate(dateStr) {
+                const params = new URLSearchParams(window.location.search);
+                params.set("date", dateStr);
+                const newUrl = `${window.location.pathname}?${params.toString()}`;
+                window.history.replaceState({}, "", newUrl);
+            }
+
+            function renderSummary(trips) {
+                const total = trips.length;
+                let planned = 0;
+                let inProgress = 0;
+                let delayed = 0;
+                let delayTotal = 0;
+
+                for (const t of trips) {
+                    const st = t.status;
+                    if (st === "planned") planned++;
+                    else if (st === "in_progress") inProgress++;
+                    else if (st === "delayed") delayed++;
+
+                    if (typeof t.delay_minutes === "number") {
+                        delayTotal += t.delay_minutes;
+                    }
+                }
+
+                if (statTotal) statTotal.textContent = String(total);
+                if (statPlanned) statPlanned.textContent = String(planned);
+                if (statInProgress) statInProgress.textContent = String(inProgress);
+                if (statDelayed) statDelayed.textContent = String(delayed);
+                if (statDelayTotal) statDelayTotal.textContent = String(delayTotal);
+            }
+
+            function createStatusBadge(status) {
+                const span = document.createElement("span");
+                let label = status;
+                let cls = "";
+
+                if (status === "planned") {
+                    label = "План";
+                    cls = "status-badge status-planned";
+                } else if (status === "in_progress") {
+                    label = "В работе";
+                    cls = "status-badge status-in-progress";
+                } else if (status === "delayed") {
+                    label = "Задержка";
+                    cls = "status-badge status-delayed";
+                } else {
+                    label = status || "—";
+                    cls = "status-badge";
+                }
+
+                span.className = cls;
+                span.innerHTML = `
+                    <span class="status-dot-small"></span>
+                    <span>${label}</span>
+                `;
+                return span;
+            }
+
+            function renderTrips(trips) {
+                if (!tripsBody) return;
+                tripsBody.innerHTML = "";
+
+                if (!trips || trips.length === 0) {
+                    const tr = document.createElement("tr");
+                    const td = document.createElement("td");
+                    td.colSpan = 7;
+                    td.style.textAlign = "center";
+                    td.style.padding = "14px";
+                    td.textContent = "По выбранной дате рейсов нет.";
+                    tr.appendChild(td);
+                    tripsBody.appendChild(tr);
+                    return;
+                }
+
+                for (const t of trips) {
+                    const tr = document.createElement("tr");
+
+                    const tdTrip = document.createElement("td");
+                    tdTrip.textContent = t.trip_id || "–";
+
+                    const tdVehicle = document.createElement("td");
+                    tdVehicle.textContent = t.vehicle_code || t.vehicle_external_id || "–";
+
+                    const tdRoute = document.createElement("td");
+                    tdRoute.textContent =
+                        (t.load_city || "–") + " → " + (t.unload_city || "–");
+
+                    const tdLoad = document.createElement("td");
+                    tdLoad.textContent =
+                        (t.planned_load_window_start || "–") +
+                        " – " +
+                        (t.planned_load_window_end || "–");
+
+                    const tdUnload = document.createElement("td");
+                    tdUnload.textContent =
+                        (t.planned_unload_window_start || "–") +
+                        " – " +
+                        (t.planned_unload_window_end || "–");
+
+                    const tdStatus = document.createElement("td");
+                    tdStatus.appendChild(createStatusBadge(t.status));
+
+                    const tdDelay = document.createElement("td");
+                    const d = t.delay_minutes;
+                    const spanDelay = document.createElement("span");
+                    spanDelay.className = "delay-text";
+                    if (typeof d === "number" && d > 0) {
+                        spanDelay.classList.add("positive");
+                        spanDelay.textContent = d.toString();
+                    } else {
+                        spanDelay.classList.add("zero");
+                        spanDelay.textContent = "0";
+                    }
+                    tdDelay.appendChild(spanDelay);
+
+                    tr.appendChild(tdTrip);
+                    tr.appendChild(tdVehicle);
+                    tr.appendChild(tdRoute);
+                    tr.appendChild(tdLoad);
+                    tr.appendChild(tdUnload);
+                    tr.appendChild(tdStatus);
+                    tr.appendChild(tdDelay);
+
+                    tripsBody.appendChild(tr);
+                }
+            }
+
+            async function loadTripsForSelectedDate() {
+                const dateStr =
+                    (dateInput && dateInput.value) || formatDateYMD(new Date());
+                if (summaryDateLabel) {
+                    summaryDateLabel.textContent = dateStr;
+                }
+                updateUrlWithDate(dateStr);
+
+                if (tripsBody) {
+                    tripsBody.innerHTML = `
+                        <tr>
+                            <td colspan="7" style="text-align:center;padding:14px;">
+                                Загрузка данных по рейсам...
+                            </td>
+                        </tr>
+                    `;
+                }
+
+                try {
+                    const url = `${apiBase}/api/trips/operator/overview?date=${encodeURIComponent(
+                        dateStr
+                    )}`;
+                    logEvent(`Запрос рейсов: GET ${url}`);
+                    const resp = await fetch(url);
+
+                    if (!resp.ok) {
+                        const txt = await resp.text();
+                        logEvent(
+                            `Ошибка загрузки рейсов (status=${resp.status}): ${txt}`
+                        );
+                        if (tripsBody) {
+                            tripsBody.innerHTML = `
+                                <tr>
+                                    <td colspan="7" style="text-align:center;padding:14px;color:#fca5a5;">
+                                        Ошибка загрузки рейсов: ${resp.status}
+                                    </td>
+                                </tr>
+                            `;
+                        }
+                        return;
+                    }
+
+                    const data = await resp.json();
+                    const trips = Array.isArray(data.trips) ? data.trips : [];
+                    logEvent(`Рейсы загружены: ${trips.length} шт.`);
+                    renderSummary(trips);
+                    renderTrips(trips);
+                } catch (err) {
+                    logEvent(`Исключение при загрузке рейсов: ${err}`);
+                    if (tripsBody) {
+                        tripsBody.innerHTML = `
+                            <tr>
+                                <td colspan="7" style="text-align:center;padding:14px;color:#fca5a5;">
+                                    Ошибка сети при загрузке рейсов.
+                                </td>
+                            </tr>
+                        `;
+                    }
+                }
+            }
+
+            function setAutoplanStatus(text) {
+                if (autoplanStatusText) {
+                    autoplanStatusText.textContent = text;
+                }
+            }
+
+            async function runAutoplan() {
+                const dateStr =
+                    (dateInput && dateInput.value) || formatDateYMD(new Date());
+                const windowValue =
+                    (autoplanWindow && autoplanWindow.value) || "day";
+
+                setAutoplanStatus("Запуск автоплана…");
+                if (autoplanBtn) {
+                    autoplanBtn.disabled = true;
+                    autoplanBtn.textContent = "Запуск…";
+                }
+
+                if (autoplanLog) {
+                    autoplanLog.textContent =
+                        `Запуск автоплана для ${dateStr} (окно: ${windowValue})…\n` +
+                        "Ожидаем ответ от /api/trips/plan";
+                }
+
+                try {
+                    const url = `${apiBase}/api/trips/plan`;
+                    logEvent(
+                        `Запрос автоплана: POST ${url} (date=${dateStr}, window=${windowValue})`
+                    );
+                    const resp = await fetch(url, {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({ date: dateStr, window: windowValue }),
+                    });
+
+                    const rawText = await resp.text();
+                    let data = null;
+                    if (rawText) {
+                        try {
+                            data = JSON.parse(rawText);
+                        } catch (e) {
+                            // ответ не JSON — оставляем как есть
+                        }
+                    }
+
+                    if (!resp.ok) {
+                        logEvent(
+                            `Ошибка автоплана (status=${resp.status}): ${rawText}`
+                        );
+                        if (autoplanLog) {
+                            autoplanLog.textContent =
+                                `status=${resp.status}\n\n` +
+                                (rawText || "<пустой ответ>");
+                        }
+                        setAutoplanStatus("Ошибка автоплана");
+                        return;
+                    }
+
+                    if (data) {
+                        const ok =
+                            typeof data.ok === "boolean" ? data.ok : true;
+                        const mode = data.mode || "autoplan";
+                        const engine = data.engine || "unknown";
+
+                        logEvent(
+                            `Автоплан выполнен (ok=${ok}, mode=${mode}, engine=${engine})`
+                        );
+                        if (autoplanLog) {
+                            autoplanLog.textContent = JSON.stringify(
+                                data,
+                                null,
+                                2
+                            );
+                        }
+
+                        if (ok) {
+                            setAutoplanStatus("Автоплан выполнен");
+                            await loadTripsForSelectedDate();
+                        } else {
+                            setAutoplanStatus(
+                                "Автоплан завершился с ошибкой"
+                            );
+                        }
+                    } else {
+                        if (autoplanLog) {
+                            autoplanLog.textContent =
+                                `status=${resp.status}\n\n` +
+                                (rawText || "<пустой ответ>");
+                        }
+                        setAutoplanStatus("Ответ без JSON");
+                    }
+                } catch (err) {
+                    if (autoplanLog) {
+                        autoplanLog.textContent =
+                            "Ошибка при вызове автоплана: " + err;
+                    }
+                    logEvent("Исключение при вызове автоплана: " + err);
+                    setAutoplanStatus("Ошибка автоплана");
+                } finally {
+                    if (autoplanBtn) {
+                        autoplanBtn.disabled = false;
+                        autoplanBtn.textContent = "Запустить автоплан";
+                    }
+                }
+            }
+
+            function renderKpi(rows) {
+                if (!kpiBody || !kpiSummary) return;
+
+                if (kpiError) kpiError.textContent = "";
+                kpiBody.innerHTML = "";
+
+                const data = Array.isArray(rows) ? rows : [];
+
+                let totalDeliveredSum = 0;
+                let onTimeDeliveredSum = 0;
+                let lateDeliveredSum = 0;
+
+                if (data.length === 0) {
+                    const tr = document.createElement("tr");
+                    const td = document.createElement("td");
+                    td.colSpan = 5;
+                    td.style.textAlign = "center";
+                    td.style.padding = "10px";
+                    td.textContent = "За выбранный период данных нет.";
+                    tr.appendChild(td);
+                    kpiBody.appendChild(tr);
+
+                    if (kpiTotalEl) kpiTotalEl.textContent = "0";
+                    if (kpiOnTimeEl) kpiOnTimeEl.textContent = "0";
+                    if (kpiLateEl) kpiLateEl.textContent = "0";
+                    if (kpiPctEl) kpiPctEl.textContent = "0%";
+                    kpiSummary.textContent = "Нет данных по KPI за выбранный период.";
+                    return;
+                }
+
+                for (const row of data) {
+                    const day = row.day ?? "";
+                    const totalDelivered = row.total_delivered ?? 0;
+                    const onTimeDelivered = row.on_time_delivered ?? 0;
+                    const lateDelivered = row.late_delivered ?? 0;
+                    const onTimePct = row.on_time_pct ?? 0.0;
+
+                    totalDeliveredSum += totalDelivered;
+                    onTimeDeliveredSum += onTimeDelivered;
+                    lateDeliveredSum += lateDelivered;
+
+                    const tr = document.createElement("tr");
+
+                    const tdDay = document.createElement("td");
+                    tdDay.textContent = day;
+                    tr.appendChild(tdDay);
+
+                    const tdTotal = document.createElement("td");
+                    tdTotal.textContent = String(totalDelivered);
+                    tr.appendChild(tdTotal);
+
+                    const tdOnTime = document.createElement("td");
+                    tdOnTime.textContent = String(onTimeDelivered);
+                    tr.appendChild(tdOnTime);
+
+                    const tdLate = document.createElement("td");
+                    tdLate.textContent = String(lateDelivered);
+                    tr.appendChild(tdLate);
+
+                    const tdPct = document.createElement("td");
+                    tdPct.textContent = `${Number(onTimePct).toFixed(2)}%`;
+                    tr.appendChild(tdPct);
+
+                    kpiBody.appendChild(tr);
+                }
+
+                const globalPct =
+                    totalDeliveredSum > 0
+                        ? (onTimeDeliveredSum * 100.0) / totalDeliveredSum
+                        : 0.0;
+
+                if (kpiTotalEl) kpiTotalEl.textContent = String(totalDeliveredSum);
+                if (kpiOnTimeEl) kpiOnTimeEl.textContent = String(onTimeDeliveredSum);
+                if (kpiLateEl) kpiLateEl.textContent = String(lateDeliveredSum);
+                if (kpiPctEl) kpiPctEl.textContent = `${globalPct.toFixed(1)}%`;
+
+                kpiSummary.innerHTML =
+                    `Суммарно за период: <strong>${totalDeliveredSum}</strong> доставок, ` +
+                    `<strong>${onTimeDeliveredSum}</strong> вовремя, ` +
+                    `<strong>${lateDeliveredSum}</strong> с опозданием. ` +
+                    `Глобальный On-Time: <strong>${globalPct.toFixed(2)}%</strong>.`;
+            }
+
+            async function loadKpi() {
+                if (!kpiDaysSelect) return;
+
+                const days = Number(kpiDaysSelect.value || "7") || 7;
+
+                if (kpiError) kpiError.textContent = "";
+                if (kpiRefreshBtn) {
+                    kpiRefreshBtn.disabled = true;
+                    kpiRefreshBtn.textContent = "Обновляю…";
+                }
+
+                try {
+                    const url = `${apiBase}/api/logistics/kpi/ontime/daily/recent?days=${encodeURIComponent(
+                        days
+                    )}`;
+                    logEvent(`Запрос KPI: GET ${url}`);
+                    const resp = await fetch(url);
+                    if (!resp.ok) {
+                        const txt = await resp.text();
+                        logEvent(
+                            `Ошибка загрузки KPI (status=${resp.status}): ${txt}`
+                        );
+                        if (kpiError) {
+                            kpiError.textContent =
+                                "Ошибка загрузки KPI. Подробности — в консоли.";
+                        }
+                        return;
+                    }
+
+                    const data = await resp.json();
+                    renderKpi(data);
+                } catch (err) {
+                    logEvent(`Исключение при загрузке KPI: ${err}`);
+                    if (kpiError) {
+                        kpiError.textContent =
+                            "Ошибка сети при загрузке KPI. См. консоль.";
+                    }
+                } finally {
+                    if (kpiRefreshBtn) {
+                        kpiRefreshBtn.disabled = false;
+                        kpiRefreshBtn.textContent = "Обновить KPI";
+                    }
+                }
+            }
+
+            document.addEventListener("DOMContentLoaded", () => {
+                initDateFromUrlOrToday();
+
+                // Авто-загрузка рейсов и KPI при открытии
+                loadTripsForSelectedDate();
+                loadKpi();
+
+                if (refreshBtn) {
+                    refreshBtn.addEventListener("click", () => {
+                        loadTripsForSelectedDate();
+                    });
+                }
+
+                if (autoplanBtn) {
+                    autoplanBtn.addEventListener("click", () => {
+                        runAutoplan();
+                    });
+                }
+
+                if (kpiRefreshBtn) {
+                    kpiRefreshBtn.addEventListener("click", () => {
+                        loadKpi();
+                    });
+                }
+
+                if (kpiDaysSelect) {
+                    // При смене периода сразу обновляем KPI — меньше кликов
+                    kpiDaysSelect.addEventListener("change", () => {
+                        loadKpi();
+                    });
+                }
+            });
+        })();
+    </script>
+</body>
+</html>

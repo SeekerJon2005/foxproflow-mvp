@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>DevFactory KPI Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #0f172a;
+      --bg-elevated: #020617;
+      --bg-card: #020617;
+      --bg-input: #020617;
+      --border-subtle: #1f2937;
+      --accent: #38bdf8;
+      --accent-soft: rgba(56,189,248,0.1);
+      --accent-strong: #0ea5e9;
+      --text-main: #e5e7eb;
+      --text-muted: #9ca3af;
+      --text-soft: #6b7280;
+      --danger: #f97373;
+      --success: #22c55e;
+      --warning: #facc15;
+      --chip-bg: rgba(15,23,42,0.8);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top, #1e293b 0, #020617 50%, #000 100%);
+      color: var(--text-main);
+      height: 100%;
+    }
+
+    body {
+      display: flex;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .shell {
+      width: 100%;
+      max-width: 1180px;
+      background: radial-gradient(circle at top left, rgba(56,189,248,0.12), transparent 55%),
+                  radial-gradient(circle at bottom right, rgba(52,211,153,0.12), transparent 55%),
+                  var(--bg-elevated);
+      border-radius: 24px;
+      border: 1px solid rgba(148,163,184,0.18);
+      box-shadow:
+        0 0 0 1px rgba(15,23,42,0.8),
+        0 18px 45px rgba(15,23,42,0.8);
+      padding: 20px 24px 24px;
+      backdrop-filter: blur(18px);
+    }
+
+    .header {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 16px;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+    }
+
+    .title-block {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .title-badge {
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      background: radial-gradient(circle at 30% 20%, #38bdf8 0, #0ea5e9 32%, #22c55e 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      font-weight: 700;
+      color: #0b1120;
+      box-shadow: 0 0 0 1px rgba(15,23,42,0.6), 0 10px 30px rgba(56,189,248,0.4);
+    }
+
+    .title-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .title-text h1 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: 0.02em;
+    }
+
+    .title-text span {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .pill {
+      font-size: 11px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      border: 1px solid rgba(148,163,184,0.5);
+      color: var(--text-muted);
+      background: rgba(15,23,42,0.8);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .pill-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 8px rgba(56,189,248,0.7);
+    }
+
+    .content {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .top-row {
+      display: grid;
+      grid-template-columns: minmax(0, 3fr) minmax(0, 2.2fr);
+      gap: 14px;
+    }
+
+    @media (max-width: 880px) {
+      .top-row {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    .card {
+      background: linear-gradient(to bottom right, rgba(15,23,42,0.96), rgba(15,23,42,0.98));
+      border-radius: 16px;
+      border: 1px solid rgba(31,41,55,0.9);
+      padding: 12px 14px;
+      box-shadow: 0 14px 30px rgba(15,23,42,0.7);
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .card-header-title {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--text-soft);
+    }
+
+    .card-header-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .filters {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 150px;
+    }
+
+    .field label {
+      font-size: 11px;
+      color: var(--text-soft);
+    }
+
+    .field input,
+    .field select {
+      font-size: 12px;
+      padding: 6px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-input);
+      color: var(--text-main);
+      outline: none;
+    }
+
+    .field input:focus,
+    .field select:focus {
+      border-color: var(--accent-strong);
+      box-shadow: 0 0 0 1px rgba(56,189,248,0.35);
+    }
+
+    .chips-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+
+    .chip {
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: var(--chip-bg);
+      border: 1px solid rgba(75,85,99,0.7);
+      color: var(--text-muted);
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .chip strong {
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    .chip-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: var(--accent);
+    }
+
+    .chip-danger { border-color: rgba(248,113,113,0.7); color: #fecaca; }
+    .chip-danger .chip-dot { background: var(--danger); }
+    .chip-warn { border-color: rgba(250,204,21,0.7); color: #fef08a; }
+    .chip-warn .chip-dot { background: var(--warning); }
+    .chip-ok { border-color: rgba(34,197,94,0.7); color: #bbf7d0; }
+    .chip-ok .chip-dot { background: var(--success); }
+
+    .table-scroll {
+      border-radius: 12px;
+      border: 1px solid rgba(31,41,55,0.9);
+      background: radial-gradient(circle at top left, rgba(15,23,42,0.9), rgba(2,6,23,0.98));
+      overflow: hidden;
+      max-height: 420px;
+      overflow-y: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    thead {
+      background: rgba(15,23,42,0.95);
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+
+    th, td {
+      padding: 6px 9px;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    th {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-soft);
+      border-bottom: 1px solid rgba(31,41,55,0.9);
+      position: sticky;
+      top: 0;
+      background: rgba(15,23,42,0.98);
+    }
+
+    tbody tr:nth-child(even) {
+      background: rgba(15,23,42,0.7);
+    }
+
+    tbody tr:nth-child(odd) {
+      background: rgba(15,23,42,0.92);
+    }
+
+    tbody tr:hover {
+      background: rgba(30,64,175,0.7);
+    }
+
+    td.numeric {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .pill-stack {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      border: 1px solid rgba(55,65,81,0.8);
+      background: rgba(15,23,42,0.85);
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .pill-stack span.key {
+      color: var(--accent);
+    }
+
+    .muted {
+      color: var(--text-soft);
+      font-size: 11px;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      display: inline-block;
+      margin-right: 4px;
+    }
+
+    .status-bad  { background: var(--danger);   box-shadow: 0 0 8px rgba(248,113,113,0.7); }
+    .status-warn { background: var(--warning); box-shadow: 0 0 8px rgba(250,204,21,0.7); }
+    .status-ok   { background: var(--success); box-shadow: 0 0 8px rgba(34,197,94,0.7); }
+
+    .small {
+      font-size: 11px;
+      color: var(--text-soft);
+    }
+
+    .error-banner {
+      display: none;
+      margin-top: 8px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(248,113,113,0.8);
+      background: rgba(127,29,29,0.9);
+      color: #fee2e2;
+      font-size: 12px;
+    }
+
+    .error-banner.visible {
+      display: block;
+    }
+
+    .reload-btn {
+      border-radius: 999px;
+      border: 1px solid rgba(148,163,184,0.5);
+      background: rgba(15,23,42,0.9);
+      color: var(--text-muted);
+      font-size: 11px;
+      padding: 4px 10px;
+      cursor: pointer;
+    }
+
+    .reload-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="header">
+      <div class="title-block">
+        <div class="title-badge">K</div>
+        <div class="title-text">
+          <h1>DevFactory KPI Dashboard</h1>
+          <span>Срез задач DevFactory по проектам и стекам</span>
+        </div>
+      </div>
+      <div class="pill">
+        <span class="pill-dot"></span>
+        <span>Источник: analytics.devfactory_task_kpi_v2</span>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="top-row">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-header-title">Фильтры</div>
+              <div class="card-header-sub">Фокус для оператора DevFactory</div>
+            </div>
+            <button id="reloadBtn" class="reload-btn">Обновить</button>
+          </div>
+
+          <div class="filters">
+            <div class="field">
+              <label for="projectFilter">Проект (project_ref)</label>
+              <input id="projectFilter" type="text" placeholder="foxproflow-core, logistics-pilot-001, acme-erp-core..." />
+            </div>
+
+            <div class="field">
+              <label for="stackFilter">Стек</label>
+              <select id="stackFilter">
+                <option value="">Все стеки</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="chips-row" id="summaryChips">
+            <!-- будет заполняться из JS -->
+          </div>
+
+          <div class="error-banner" id="errorBanner">
+            Ошибка при запросе KPI. Проверьте, что API /api/devfactory/kpi/tasks доступно,
+            и попробуйте ещё раз.
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-header-title">Сводка</div>
+              <div class="card-header-sub">Всё, что видит DevFactory про себя</div>
+            </div>
+          </div>
+
+          <div id="summaryPanel" class="small">
+            <p id="summaryMain">Загрузка данных...</p>
+            <p id="summaryDetails" class="muted"></p>
+            <p id="summaryPerf" class="muted"></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-header-title">Таблица KPI</div>
+            <div class="card-header-sub">По project_ref и stack</div>
+          </div>
+        </div>
+
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Проект</th>
+                <th>Стек</th>
+                <th class="numeric">Всего</th>
+                <th class="numeric">New</th>
+                <th class="numeric">Done</th>
+                <th class="numeric">Failed</th>
+                <th class="numeric">Сред. длит.</th>
+                <th>Последняя активность</th>
+              </tr>
+            </thead>
+            <tbody id="kpiTableBody">
+              <!-- строки из JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const state = {
+      raw: [],
+      filtered: [],
+    };
+
+    const els = {
+      projectFilter: document.getElementById('projectFilter'),
+      stackFilter: document.getElementById('stackFilter'),
+      tableBody: document.getElementById('kpiTableBody'),
+      summaryMain: document.getElementById('summaryMain'),
+      summaryDetails: document.getElementById('summaryDetails'),
+      summaryPerf: document.getElementById('summaryPerf'),
+      summaryChips: document.getElementById('summaryChips'),
+      errorBanner: document.getElementById('errorBanner'),
+      reloadBtn: document.getElementById('reloadBtn'),
+    };
+
+    function formatDuration(sec) {
+      if (sec == null) return '—';
+      const s = Math.round(sec);
+      if (s < 60) return s + ' c';
+      const m = Math.floor(s / 60);
+      if (m < 60) return m + ' мин';
+      const h = Math.floor(m / 60);
+      const mm = m % 60;
+      if (h < 24) return h + ' ч ' + (mm ? mm + ' мин' : '');
+      const d = Math.floor(h / 24);
+      const hh = h % 24;
+      return d + ' д ' + (hh ? hh + ' ч' : '');
+    }
+
+    function formatTs(ts) {
+      if (!ts) return '—';
+      try {
+        const d = new Date(ts);
+        return d.toLocaleString('ru-RU', {
+          year: '2-digit',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+      } catch {
+        return ts;
+      }
+    }
+
+    function computeStats(rows) {
+      let totalTasks = 0;
+      let totalNew = 0;
+      let totalDone = 0;
+      let totalFailed = 0;
+      let durations = [];
+
+      for (const r of rows) {
+        totalTasks += r.total_tasks;
+        totalNew += r.new_tasks;
+        totalDone += r.done_tasks;
+        totalFailed += r.failed_tasks;
+        if (r.avg_duration_sec != null && !isNaN(r.avg_duration_sec)) {
+          durations.push(r.avg_duration_sec);
+        }
+      }
+
+      let avgDuration = null;
+      if (durations.length) {
+        const sum = durations.reduce((a, b) => a + b, 0);
+        avgDuration = sum / durations.length;
+      }
+
+      return {
+        distinctProjects: new Set(rows.map(r => r.project_ref)).size,
+        distinctStacks: new Set(rows.map(r => r.stack)).size,
+        totalTasks,
+        totalNew,
+        totalDone,
+        totalFailed,
+        avgDuration,
+      };
+    }
+
+    function renderSummary(rows) {
+      if (!rows.length) {
+        els.summaryMain.textContent = 'Нет задач под текущий фильтр.';
+        els.summaryDetails.textContent = '';
+        els.summaryPerf.textContent = '';
+        els.summaryChips.innerHTML = '';
+        return;
+      }
+
+      const stats = computeStats(rows);
+
+      els.summaryMain.textContent =
+        `Всего задач: ${stats.totalTasks} (new: ${stats.totalNew}, done: ${stats.totalDone}, failed: ${stats.totalFailed})`;
+
+      els.summaryDetails.textContent =
+        `Проектов: ${stats.distinctProjects}, стеков: ${stats.distinctStacks}. ` +
+        `Сейчас вы видите DevFactory как агрегированную фабрику задач.`;
+
+      let perfText = 'Средняя длительность по стекам: ';
+      if (stats.avgDuration == null) {
+        perfText += 'недостаточно данных (мало done).';
+      } else {
+        perfText += formatDuration(stats.avgDuration) + ' (по средним по стекам).';
+      }
+      els.summaryPerf.textContent = perfText;
+
+      // Chips
+      const chips = [];
+
+      const newLevel = stats.totalNew;
+      let newClass = 'chip-ok';
+      let newLabel = 'Нагрузка по new задачам: мягкая';
+      if (newLevel > 10 && newLevel <= 30) {
+        newClass = 'chip-warn';
+        newLabel = 'Нагрузка по new задачам: заметная';
+      } else if (newLevel > 30) {
+        newClass = 'chip-danger';
+        newLabel = 'Нагрузка по new задачам: высокая';
+      }
+
+      chips.push(`
+        <div class="chip ${newClass}">
+          <span class="chip-dot"></span>
+          <span><strong>${stats.totalNew}</strong> new задач • ${newLabel}</span>
+        </div>
+      `);
+
+      chips.push(`
+        <div class="chip chip-ok">
+          <span class="chip-dot"></span>
+          <span>Done: <strong>${stats.totalDone}</strong> • DevFactory стабильно завершает задачи</span>
+        </div>
+      `);
+
+      if (stats.avgDuration != null) {
+        chips.push(`
+          <div class="chip chip-warn">
+            <span class="chip-dot"></span>
+            <span>Сред. длительность: <strong>${formatDuration(stats.avgDuration)}</strong></span>
+          </div>
+        `);
+      }
+
+      els.summaryChips.innerHTML = chips.join('\n');
+    }
+
+    function renderTable(rows) {
+      if (!rows.length) {
+        els.tableBody.innerHTML = `
+          <tr>
+            <td colspan="8" class="muted">Нет данных для отображения.</td>
+          </tr>
+        `;
+        return;
+      }
+
+      const html = rows.map(r => {
+        const loadLevel = r.new_tasks;
+        let statusClass = 'status-ok';
+        let statusTitle = 'Нагрузка по new низкая';
+        if (loadLevel > 10 && loadLevel <= 30) {
+          statusClass = 'status-warn';
+          statusTitle = 'Нагрузка по new средняя';
+        } else if (loadLevel > 30) {
+          statusClass = 'status-bad';
+          statusTitle = 'Нагрузка по new высокая';
+        }
+
+        return `
+          <tr>
+            <td>
+              <div>
+                <span>${r.project_ref}</span><br/>
+                <span class="muted small">${statusTitle}</span>
+              </div>
+            </td>
+            <td>
+              <span class="pill-stack">
+                <span class="key">stack</span>
+                <span>${r.stack}</span>
+              </span>
+            </td>
+            <td class="numeric">${r.total_tasks}</td>
+            <td class="numeric">${r.new_tasks}</td>
+            <td class="numeric">${r.done_tasks}</td>
+            <td class="numeric">${r.failed_tasks}</td>
+            <td class="numeric">${formatDuration(r.avg_duration_sec)}</td>
+            <td>
+              <div class="small">
+                <span class="${statusClass} status-dot"></span>
+                <span>${formatTs(r.last_updated_at)}</span>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('\n');
+
+      els.tableBody.innerHTML = html;
+    }
+
+    function applyFilters() {
+      const projectTerm = (els.projectFilter.value || '').trim().toLowerCase();
+      const stackValue = (els.stackFilter.value || '').trim();
+
+      let rows = state.raw.slice();
+
+      if (projectTerm) {
+        rows = rows.filter(r =>
+          r.project_ref.toLowerCase().includes(projectTerm)
+        );
+      }
+
+      if (stackValue) {
+        rows = rows.filter(r => r.stack === stackValue);
+      }
+
+      state.filtered = rows;
+      renderSummary(rows);
+      renderTable(rows);
+    }
+
+    function populateStackFilter(rows) {
+      const uniqueStacks = Array.from(new Set(rows.map(r => r.stack))).sort();
+      els.stackFilter.innerHTML = '<option value="">Все стеки</option>';
+      for (const s of uniqueStacks) {
+        const opt = document.createElement('option');
+        opt.value = s;
+        opt.textContent = s;
+        els.stackFilter.appendChild(opt);
+      }
+    }
+
+    async function fetchKpi() {
+      els.errorBanner.classList.remove('visible');
+      els.summaryMain.textContent = 'Загрузка KPI DevFactory...';
+      els.summaryDetails.textContent = '';
+      els.summaryPerf.textContent = '';
+      els.tableBody.innerHTML = `
+        <tr>
+          <td colspan="8" class="muted">Загрузка данных из /api/devfactory/kpi/tasks...</td>
+        </tr>
+      `;
+
+      try {
+        const resp = await fetch('/api/devfactory/kpi/tasks', {
+          headers: {
+            'Accept': 'application/json',
+          },
+        });
+
+        if (!resp.ok) {
+          throw new Error('HTTP ' + resp.status);
+        }
+
+        const data = await resp.json();
+        if (!Array.isArray(data)) {
+          throw new Error('Unexpected payload');
+        }
+
+        state.raw = data;
+        populateStackFilter(data);
+        applyFilters();
+      } catch (err) {
+        console.error('Failed to fetch KPI', err);
+        els.errorBanner.classList.add('visible');
+        els.tableBody.innerHTML = `
+          <tr>
+            <td colspan="8" class="muted">Не удалось получить данные KPI. См. консоль браузера.</td>
+          </tr>
+        `;
+        els.summaryMain.textContent = 'DevFactory KPI недоступно.';
+        els.summaryDetails.textContent = '';
+        els.summaryPerf.textContent = '';
+      }
+    }
+
+    // Инициализация
+    document.addEventListener('DOMContentLoaded', () => {
+      els.projectFilter.addEventListener('input', () => applyFilters());
+      els.stackFilter.addEventListener('change', () => applyFilters());
+      els.reloadBtn.addEventListener('click', () => fetchKpi());
+
+      fetchKpi();
+    });
+  </script>
+</body>
+</html>

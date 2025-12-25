@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>DevFactory Operator Portal v1.2 — Intent & Questions</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 0;
+      background: #0f172a;
+      color: #e5e7eb;
+    }
+    header {
+      padding: 12px 16px;
+      background: #020617;
+      border-bottom: 1px solid #1e293b;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+      color: #e5e7eb;
+    }
+    header .env {
+      font-size: 12px;
+      color: #9ca3af;
+    }
+    main {
+      display: flex;
+      height: calc(100vh - 52px);
+    }
+    .column {
+      padding: 12px;
+      box-sizing: border-box;
+    }
+    .col-left {
+      width: 32%;
+      border-right: 1px solid #1f2937;
+      overflow-y: auto;
+    }
+    .col-right {
+      width: 68%;
+      overflow-y: auto;
+    }
+    h2 {
+      margin: 0 0 8px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #f9fafb;
+    }
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+      font-size: 12px;
+    }
+    button {
+      background: #2563eb;
+      border: none;
+      color: white;
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #111827;
+      color: #e5e7eb;
+      border: 1px solid #1f2937;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+    input[type="text"] {
+      background: #020617;
+      border: 1px solid #1f2937;
+      border-radius: 4px;
+      color: #e5e7eb;
+      padding: 4px 6px;
+      font-size: 12px;
+      min-width: 180px;
+    }
+    .tasks-list {
+      border: 1px solid #1f2937;
+      border-radius: 6px;
+      background: #020617;
+      overflow: hidden;
+    }
+    .task-row {
+      padding: 6px 8px;
+      border-bottom: 1px solid #111827;
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .task-row:last-child {
+      border-bottom: none;
+    }
+    .task-row:hover {
+      background: #111827;
+    }
+    .task-row.active {
+      background: #1d4ed8;
+    }
+    .task-row .title {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 240px;
+    }
+    .badge {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: #111827;
+      border: 1px solid #1f2937;
+      color: #9ca3af;
+    }
+    .badge.stack-python {
+      border-color: #22c55e;
+      color: #bbf7d0;
+    }
+    .badge.stack-sql {
+      border-color: #38bdf8;
+      color: #bae6fd;
+    }
+    .section {
+      margin-bottom: 12px;
+      padding: 8px;
+      border-radius: 6px;
+      background: #020617;
+      border: 1px solid #1f2937;
+    }
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: #111827;
+      color: #9ca3af;
+    }
+    .pill span.key {
+      color: #6b7280;
+    }
+    .pill span.val {
+      color: #e5e7eb;
+    }
+    .pill.required {
+      border: 1px solid #f97316;
+      color: #fed7aa;
+    }
+    .pill.optional {
+      border: 1px solid #4b5563;
+    }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 12px;
+    }
+    .questions-list {
+      margin-top: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .question-item {
+      padding: 6px;
+      border-radius: 4px;
+      border: 1px solid #1f2937;
+      background: #020617;
+    }
+    .question-item.required {
+      border-color: #f97316;
+      background: #111827;
+    }
+    .question-text {
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+    .question-meta {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      font-size: 10px;
+      color: #9ca3af;
+    }
+    .status-bar {
+      font-size: 11px;
+      color: #9ca3af;
+      margin-top: 4px;
+    }
+    .status-bar span.ok {
+      color: #4ade80;
+    }
+    .status-bar span.err {
+      color: #f87171;
+    }
+    .json-dump {
+      margin-top: 4px;
+      max-height: 260px;
+      overflow: auto;
+      font-size: 11px;
+      background: #020617;
+      border-radius: 4px;
+      padding: 6px;
+      border: 1px solid #111827;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>DevFactory Operator Portal v1.2 — Intent & Questions</h1>
+    <div class="env">
+      Subject: <span id="env-subject-id">e.yatskov@foxproflow.ru</span> · API: <span id="env-api-base">/api/devfactory</span>
+    </div>
+  </header>
+  <main>
+    <section class="column col-left">
+      <h2>Задачи DevFactory</h2>
+      <div class="toolbar">
+        <button onclick="loadTasks()">Обновить список</button>
+        <span id="tasks-count" style="font-size:11px;color:#9ca3af;">–</span>
+      </div>
+      <div class="tasks-list" id="tasks-list"></div>
+    </section>
+
+    <section class="column col-right">
+      <h2>Детали задачи</h2>
+      <div class="toolbar">
+        <div style="display:flex;gap:6px;align-items:center;">
+          <span style="font-size:12px;">Выбрана задача:</span>
+          <span id="task-selected-id" class="pill"><span class="key">id:</span> <span class="val">–</span></span>
+          <span id="task-selected-stack" class="pill"><span class="key">stack:</span> <span class="val">–</span></span>
+          <span id="task-selected-status" class="pill"><span class="key">status:</span> <span class="val">–</span></span>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button class="secondary" onclick="loadTaskDetails()" id="btn-reload-task" disabled>Обновить задачу</button>
+          <button onclick="regenQuestions()" id="btn-regen-questions" disabled>Сгенерировать вопросы</button>
+        </div>
+      </div>
+
+      <div class="section" id="section-intent">
+        <div class="section-header">
+          <span>Intent (понимание задачи)</span>
+          <div id="intent-meta-pills"></div>
+        </div>
+        <div id="intent-summary" style="font-size:12px;color:#e5e7eb;"></div>
+        <div id="intent-extra" style="margin-top:4px;font-size:11px;color:#9ca3af;"></div>
+        <div id="intent-flowmeta" style="margin-top:4px;font-size:11px;color:#9ca3af;"></div>
+        <div class="json-dump mono" id="intent-json" style="display:none;"></div>
+      </div>
+
+      <div class="section" id="section-questions">
+        <div class="section-header">
+          <span>Questions (уточнения)</span>
+          <div id="questions-meta-pills"></div>
+        </div>
+        <div id="questions-empty" style="font-size:12px;color:#9ca3af;">Вопросы ещё не сгенерированы. Нажмите «Сгенерировать вопросы».</div>
+        <div class="questions-list" id="questions-list"></div>
+      </div>
+
+      <div class="section" id="section-raw">
+        <div class="section-header">
+          <span>Сырой input_spec</span>
+        </div>
+        <div class="json-dump mono" id="input-spec-json"></div>
+      </div>
+
+      <div class="status-bar" id="status-bar"></div>
+    </section>
+  </main>
+
+  <script>
+    const API_BASE = '/api/devfactory';
+    const SUBJECT_TYPE = 'user';
+    const SUBJECT_ID = 'e.yatskov@foxproflow.ru';
+
+    let currentTaskId = null;
+    let currentTask = null;
+
+    function headers() {
+      return {
+        'Content-Type': 'application/json',
+        'X-Subject-Type': SUBJECT_TYPE,
+        'X-Subject-Id': SUBJECT_ID,
+      };
+    }
+
+    function setStatus(msg, isError = false) {
+      const bar = document.getElementById('status-bar');
+      if (!msg) {
+        bar.textContent = '';
+        return;
+      }
+      bar.innerHTML = isError
+        ? `<span class="err">Ошибка:</span> ${msg}`
+        : `<span class="ok">OK:</span> ${msg}`;
+    }
+
+    async function loadTasks() {
+      setStatus('Загружаю список задач…');
+      const listEl = document.getElementById('tasks-list');
+      listEl.innerHTML = '';
+
+      try {
+        const res = await fetch(`${API_BASE}/tasks`, {
+          method: 'GET',
+          headers: headers(),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          setStatus(`Ошибка при загрузке задач: ${res.status} ${text}`, true);
+          return;
+        }
+        const tasks = await res.json();
+        document.getElementById('tasks-count').textContent = `${tasks.length} шт.`;
+
+        tasks.forEach(t => {
+          const row = document.createElement('div');
+          row.className = 'task-row';
+          row.dataset.id = t.id;
+
+          const left = document.createElement('div');
+          left.className = 'title';
+          left.textContent = t.title || `(id=${t.id})`;
+
+          const right = document.createElement('div');
+          const badgeStatus = document.createElement('span');
+          badgeStatus.className = 'badge';
+          badgeStatus.textContent = t.status;
+
+          const badgeStack = document.createElement('span');
+          badgeStack.className = 'badge';
+          badgeStack.textContent = t.stack;
+          if (t.stack === 'python_backend') {
+            badgeStack.classList.add('stack-python');
+          } else if (t.stack === 'sql-postgres' || t.stack === 'sql') {
+            badgeStack.classList.add('stack-sql');
+          }
+
+          right.appendChild(badgeStack);
+          right.appendChild(document.createTextNode(' '));
+          right.appendChild(badgeStatus);
+
+          row.appendChild(left);
+          row.appendChild(right);
+          row.onclick = () => selectTaskRow(t.id, row, tasks);
+
+          listEl.appendChild(row);
+        });
+
+        setStatus('Список задач обновлён');
+      } catch (err) {
+        console.error(err);
+        setStatus(`Ошибка при загрузке задач: ${err}`, true);
+      }
+    }
+
+    function selectTaskRow(id, rowEl, allTasks) {
+      currentTaskId = id;
+      document.querySelectorAll('.task-row').forEach(r => r.classList.remove('active'));
+      rowEl.classList.add('active');
+      document.getElementById('task-selected-id').innerHTML = `<span class="key">id:</span> <span class="val">${id}</span>`;
+      document.getElementById('task-selected-stack').innerHTML = `<span class="key">stack:</span> <span class="val">…</span>`;
+      document.getElementById('task-selected-status').innerHTML = `<span class="key">status:</span> <span class="val">…</span>`;
+      document.getElementById('btn-reload-task').disabled = false;
+      document.getElementById('btn-regen-questions').disabled = false;
+      loadTaskDetails();
+    }
+
+    async function loadTaskDetails() {
+      if (!currentTaskId) return;
+      setStatus(`Загружаю задачу id=${currentTaskId}…`);
+
+      try {
+        const res = await fetch(`${API_BASE}/tasks/${currentTaskId}`, {
+          method: 'GET',
+          headers: headers(),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          setStatus(`Ошибка при загрузке задачи: ${res.status} ${text}`, true);
+          return;
+        }
+        const task = await res.json();
+        currentTask = task;
+        renderTask(task);
+        setStatus(`Задача id=${currentTaskId} загружена`);
+      } catch (err) {
+        console.error(err);
+        setStatus(`Ошибка при загрузке задачи: ${err}`, true);
+      }
+    }
+
+    function renderTask(task) {
+      // Общие поля
+      document.getElementById('task-selected-id').innerHTML =
+        `<span class="key">id:</span> <span class="val">${task.id}</span>`;
+      document.getElementById('task-selected-stack').innerHTML =
+        `<span class="key">stack:</span> <span class="val">${task.stack}</span>`;
+      document.getElementById('task-selected-status').innerHTML =
+        `<span class="key">status:</span> <span class="val">${task.status}</span>`;
+
+      const intent = task.input_spec && task.input_spec.intent ? task.input_spec.intent : null;
+      const questions = task.input_spec && task.input_spec.questions ? task.input_spec.questions : null;
+
+      // Intent section
+      const intentSummaryEl = document.getElementById('intent-summary');
+      const intentExtraEl = document.getElementById('intent-extra');
+      const intentFlowmetaEl = document.getElementById('intent-flowmeta');
+      const intentMetaPills = document.getElementById('intent-meta-pills');
+      const intentJsonEl = document.getElementById('intent-json');
+
+      if (!intent) {
+        intentSummaryEl.textContent = 'Для этой задачи Intent ещё не сгенерирован (создайте задачу через /tasks/intent).';
+        intentExtraEl.textContent = '';
+        intentFlowmetaEl.textContent = '';
+        intentMetaPills.innerHTML = '';
+        intentJsonEl.style.display = 'none';
+      } else {
+        intentSummaryEl.textContent = intent.summary ? intent.summary.goal : '(нет summary)';
+        const kind = intent.task_kind || 'unknown';
+        const domain = intent.domain && intent.domain.primary ? intent.domain.primary : 'unknown';
+        const langs = intent.stack && intent.stack.languages ? intent.stack.languages.join(', ') : '–';
+        const scope = intent.constraints && intent.constraints.scope ? intent.constraints.scope : '–';
+        const risk = intent.risk && intent.risk.level ? intent.risk.level : '–';
+
+        intentMetaPills.innerHTML = `
+          <span class="pill"><span class="key">kind:</span> <span class="val">${kind}</span></span>
+          <span class="pill"><span class="key">domain:</span> <span class="val">${domain}</span></span>
+          <span class="pill"><span class="key">langs:</span> <span class="val">${langs}</span></span>
+          <span class="pill"><span class="key">scope:</span> <span class="val">${scope}</span></span>
+          <span class="pill"><span class="key">risk:</span> <span class="val">${risk}</span></span>
+        `;
+
+        const ctx = task.input_spec && task.input_spec.intent_context ? task.input_spec.intent_context : null;
+        if (ctx) {
+          intentExtraEl.textContent =
+            `project_ref=${ctx.project_ref}, source=${ctx.source}, lang=${ctx.language}, channel=${ctx.channel}`;
+        } else {
+          intentExtraEl.textContent = '';
+        }
+
+        // FlowMeta refs
+        const refs = intent.domain && intent.domain.flowmeta_refs ? intent.domain.flowmeta_refs : [];
+        if (refs.length) {
+          let preview;
+          if (refs.length <= 4) {
+            preview = refs.join(', ');
+          } else {
+            preview = refs.slice(0, 3).join(', ') + `, +${refs.length - 3}…`;
+          }
+          intentFlowmetaEl.textContent = `FlowMeta: ${preview}`;
+        } else {
+          intentFlowmetaEl.textContent = 'FlowMeta: –';
+        }
+
+        intentJsonEl.textContent = JSON.stringify(intent, null, 2);
+        intentJsonEl.style.display = 'block';
+      }
+
+      // Questions section
+      const qEmptyEl = document.getElementById('questions-empty');
+      const qListEl = document.getElementById('questions-list');
+      const qMetaPills = document.getElementById('questions-meta-pills');
+
+      qListEl.innerHTML = '';
+      if (!questions || !questions.questions || !questions.questions.length) {
+        qEmptyEl.style.display = 'block';
+        qMetaPills.innerHTML = '';
+      } else {
+        qEmptyEl.style.display = 'none';
+        const qArr = questions.questions;
+        const meta = questions.meta || {};
+        const packIds = meta.pack_ids || [];
+
+        qMetaPills.innerHTML = `
+          <span class="pill"><span class="key">count:</span> <span class="val">${qArr.length}</span></span>
+          <span class="pill"><span class="key">packs:</span> <span class="val">${packIds.join(', ') || '–'}</span></span>
+        `;
+
+        qArr.forEach(q => {
+          const item = document.createElement('div');
+          item.className = 'question-item' + (q.required ? ' required' : ' optional');
+
+          const textEl = document.createElement('div');
+          textEl.className = 'question-text';
+          textEl.textContent = q.text;
+
+          const metaEl = document.createElement('div');
+          metaEl.className = 'question-meta';
+
+          const pillReq = document.createElement('span');
+          pillReq.className = 'pill ' + (q.required ? 'required' : 'optional');
+          pillReq.innerHTML = `<span class="key">${q.required ? 'обязательный' : 'опциональный'}</span>`;
+          metaEl.appendChild(pillReq);
+
+          const pillTarget = document.createElement('span');
+          pillTarget.className = 'pill';
+          pillTarget.innerHTML = `<span class="key">target:</span> <span class="val">${q.target || '–'}</span>`;
+          metaEl.appendChild(pillTarget);
+
+          const pillType = document.createElement('span');
+          pillType.className = 'pill';
+          pillType.innerHTML = `<span class="key">type:</span> <span class="val">${q.answer_type || 'text'}</span>`;
+          metaEl.appendChild(pillType);
+
+          if (q.choices && q.choices.length) {
+            const pillChoices = document.createElement('span');
+            pillChoices.className = 'pill';
+            pillChoices.innerHTML = `<span class="key">choices:</span> <span class="val">${q.choices.join(' | ')}</span>`;
+            metaEl.appendChild(pillChoices);
+          }
+
+          if (q.help) {
+            const pillHelp = document.createElement('span');
+            pillHelp.className = 'pill';
+            pillHelp.innerHTML = `<span class="key">help:</span> <span class="val">${q.help}</span>`;
+            metaEl.appendChild(pillHelp);
+          }
+
+          item.appendChild(textEl);
+          item.appendChild(metaEl);
+          qListEl.appendChild(item);
+        });
+      }
+
+      // Raw input_spec
+      const rawEl = document.getElementById('input-spec-json');
+      rawEl.textContent = JSON.stringify(task.input_spec || {}, null, 2);
+    }
+
+    async function regenQuestions() {
+      if (!currentTaskId) return;
+      setStatus(`Запускаю Question Engine для задачи id=${currentTaskId}…`);
+
+      try {
+        const res = await fetch(`${API_BASE}/tasks/${currentTaskId}/questions/regen`, {
+          method: 'POST',
+          headers: headers(),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          setStatus(`Ошибка при генерации вопросов: ${res.status} ${text}`, true);
+          return;
+        }
+        const task = await res.json();
+        currentTask = task;
+        renderTask(task);
+        setStatus(`Вопросы сгенерированы и записаны в input_spec.questions для задачи id=${currentTaskId}`);
+      } catch (err) {
+        console.error(err);
+        setStatus(`Ошибка при генерации вопросов: ${err}`, true);
+      }
+    }
+
+    // Автозагрузка списка задач при открытии
+    window.addEventListener('load', () => {
+      loadTasks();
+    });
+  </script>
+</body>
+</html>

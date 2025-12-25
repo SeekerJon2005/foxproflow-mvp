@@ -1443,7 +1443,7 @@ def load_region_progress() -> Optional[Dict[str, Any]]:
             with open(REGION_PROGRESS_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except Exception as e:
-            logger.error(f"Ошибка загрузки прогресса: {str(e)}")
+            logger.error(f"Ошибка загрузки прогресса: {e}")
     return None
 
 def clear_region_progress() -> None:
@@ -1616,7 +1616,7 @@ def setup_all_region_filters(driver: webdriver.Chrome) -> None:
     logger.info("Настройка фильтров для всех регионов завершена!")
 
 # ---------------------------
-# MAIN (меню)
+# MAIN (меню) + AUTO CLI
 # ---------------------------
 def main() -> None:
     global stop_parsing, current_driver
@@ -1753,5 +1753,49 @@ def main() -> None:
     else:
         logger.warning("❌ Неверный выбор. Попробуйте снова.")
 
+def run_all_regions_cli(headless: bool = False) -> None:
+    """
+    Неблокирующий CLI-режим для автоматического парсинга всех регионов.
+    Используется внешними скриптами/планировщиком:
+      python -m src.parsers.ati_parser auto_all_regions
+    """
+    global current_driver
+    try:
+        logger.info("=== AUTO MODE: парсинг всех регионов (run_all_regions_cli) ===")
+        try:
+            driver = init_driver(headless=headless, profile_path=PROFILE_PATH)
+        except Exception as e:
+            logger.error(f"❌ Ошибка инициализации драйвера (auto_all_regions): {e}")
+            return
+
+        try:
+            if not load_session(driver) or not is_logged_in(driver):
+                logger.error(
+                    "❌ Не удалось восстановить сессию в auto_all_regions. "
+                    "Сначала выполните ручную авторизацию (пункт 1 интерактивного меню)."
+                )
+                return
+
+            logger.info("✅ Сессия восстановлена! Запускаем parse_all_regions в автоматическом режиме...")
+            parse_all_regions(driver)
+        except Exception as e:
+            logger.error(f"❌ Ошибка в auto_all_regions: {e}")
+        finally:
+            try:
+                if driver is not None:
+                    driver.quit()
+            except Exception:
+                pass
+            current_driver = None
+    finally:
+        logger.info("=== AUTO MODE: парсинг всех регионов завершён (run_all_regions_cli) ===")
+
 if __name__ == "__main__":
-    main()
+    import sys
+
+    # CLI-режим: python -m src.parsers.ati_parser auto_all_regions
+    if len(sys.argv) > 1 and sys.argv[1] == "auto_all_regions":
+        # headless=True можно включить позже; пока False, чтобы видеть окно для отладки
+        run_all_regions_cli(headless=False)
+    else:
+        main()

@@ -1,0 +1,1491 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>FoxProFlow • DevOrders Console</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    :root {
+      --bg: #050608;
+      --bg-alt: #0b0f14;
+      --panel: #10151f;
+      --panel-alt: #151c27;
+      --border: #222b3a;
+      --accent: #ff7a3c;
+      --accent-soft: rgba(255, 122, 60, 0.14);
+      --accent-strong: rgba(255, 122, 60, 0.25);
+      --text: #f5f7ff;
+      --text-muted: #9ca7c0;
+      --danger: #ff4d4f;
+      --success: #42be65;
+      --radius-lg: 14px;
+      --radius-sm: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top left, #161b2b 0, #050608 55%);
+      color: var(--text);
+    }
+
+    header {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(to right, rgba(11, 15, 20, 0.95), rgba(10, 14, 20, 0.8));
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      backdrop-filter: blur(12px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .brand-mark {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 30% 30%, #ffd2b3, #ff7a3c 45%, #ff4b16 75%);
+      box-shadow: 0 0 18px rgba(255, 122, 60, 0.55);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .brand-mark::after {
+      content: "";
+      position: absolute;
+      inset: 5px 6px 6px 8px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 20% 20%, transparent 0, transparent 40%, rgba(0,0,0,0.8) 75%);
+    }
+
+    .brand-title {
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+    }
+
+    .brand-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .pill {
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(8, 12, 18, 0.95);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .pill-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 8px rgba(66, 190, 101, 0.9);
+    }
+
+    .pill-small {
+      border-radius: 999px;
+      padding: 2px 8px;
+      border: 1px solid rgba(48, 60, 87, 0.9);
+      background: rgba(11, 16, 25, 0.98);
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    main {
+      padding: 16px 20px 20px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.4fr);
+      gap: 16px;
+      align-items: flex-start;
+    }
+
+    @media (max-width: 1100px) {
+      main {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    .panel {
+      background: linear-gradient(145deg, rgba(16, 21, 31, 0.98), rgba(9, 13, 20, 0.98));
+      border-radius: var(--radius-lg);
+      border: 1px solid rgba(28, 38, 55, 0.85);
+      box-shadow:
+        0 24px 40px rgba(0, 0, 0, 0.65),
+        0 0 0 1px rgba(155, 168, 204, 0.04);
+      padding: 14px 14px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 0;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 4px;
+    }
+
+    .panel-title {
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .panel-title span.icon {
+      font-size: 14px;
+    }
+
+    .panel-subtitle {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .orders-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+    }
+
+    .btn {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: rgba(9, 13, 21, 0.98);
+      color: var(--text);
+      padding: 5px 12px;
+      font-size: 11px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition:
+        background 0.1s ease-out,
+        transform 0.04s ease-out,
+        box-shadow 0.1s ease-out,
+        border-color 0.1s.ease-out;
+    }
+
+    .btn.primary {
+      border-color: var(--accent);
+      background: radial-gradient(circle at 0 0, rgba(255, 204, 170, 0.07), var(--accent-soft));
+      box-shadow: 0 0 0 1px rgba(255, 122, 60, 0.35);
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+      box-shadow: none;
+    }
+
+    .btn[disabled] {
+      opacity: 0.6;
+      cursor: default;
+      box-shadow: none;
+    }
+
+    .orders-list-container {
+      border-radius: var(--radius-sm);
+      background: rgba(9, 13, 23, 0.9);
+      border: 1px solid rgba(40, 52, 76, 0.9);
+      overflow: hidden;
+      min-height: 120px;
+      max-height: 420px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .orders-header-row,
+    .orders-row {
+      display: grid;
+      grid-template-columns: 1fr 0.5fr 0.6fr 0.5fr;
+      gap: 8px;
+      align-items: center;
+      padding: 6px 10px;
+      font-size: 11px;
+    }
+
+    .orders-header-row {
+      background: rgba(15, 20, 32, 0.95);
+      border-bottom: 1px solid rgba(46, 59, 83, 0.9);
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .orders-body {
+      overflow: auto;
+    }
+
+    .orders-row {
+      cursor: pointer;
+      border-bottom: 1px solid rgba(22, 31, 47, 0.9);
+    }
+
+    .orders-row:last-child {
+      border-bottom: none;
+    }
+
+    .orders-row:hover {
+      background: linear-gradient(to right, rgba(255, 122, 60, 0.08), rgba(9, 13, 23, 0.95));
+    }
+
+    .orders-row.selected {
+      background: linear-gradient(to right, rgba(255, 122, 60, 0.19), rgba(9, 13, 25, 0.95));
+      box-shadow: inset 2px 0 0 var(--accent);
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 9px;
+      border-radius: 999px;
+      font-size: 10px;
+      border: 1px solid rgba(69, 84, 115, 0.9);
+      background: rgba(15, 21, 31, 0.95);
+      color: var(--text-muted);
+    }
+
+    .tag-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    .tag.status-new {
+      border-color: var(--accent);
+      background: rgba(255, 122, 60, 0.1);
+      color: #ffd5c1;
+    }
+
+    .tag.status-progress {
+      border-color: #facc15;
+      background: rgba(250, 204, 21, 0.08);
+      color: #fef9c3;
+    }
+
+    .tag.status-done {
+      border-color: var(--success);
+      background: rgba(66, 190, 101, 0.09);
+      color: #bbf7d0;
+    }
+
+    .tag.status-failed {
+      border-color: var(--danger);
+      background: rgba(248, 113, 113, 0.09);
+      color: #fecaca;
+    }
+
+    .muted {
+      color: var(--text-muted);
+    }
+
+    .mono {
+      font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 11px;
+    }
+
+    .details-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 10px;
+    }
+
+    .details-section {
+      border-radius: var(--radius-sm);
+      background: rgba(9, 13, 23, 0.9);
+      border: 1px solid rgba(40, 52, 76, 0.9);
+      padding: 10px 10px 8px;
+      font-size: 11px;
+    }
+
+    .details-section header {
+      padding: 0 0 6px;
+      margin: 0 0 6px;
+      border: none;
+      justify-content: space-between;
+      background: transparent;
+      display: flex;
+      align-items: center;
+    }
+
+    .details-section header h3 {
+      margin: 0;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+    }
+
+    .details-row {
+      display: grid;
+      grid-template-columns: 120px minmax(0, 1fr);
+      gap: 4px 8px;
+      margin-bottom: 4px;
+    }
+
+    .details-row-label {
+      color: var(--text-muted);
+    }
+
+    .details-row-value {
+      word-break: break-word;
+    }
+
+    .form {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px 10px;
+      margin-top: 4px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      font-size: 11px;
+    }
+
+    .form-group.full {
+      grid-column: 1 / -1;
+    }
+
+    label {
+      color: var(--text-muted);
+    }
+
+    input[type="text"],
+    input[type="number"],
+    textarea {
+      border-radius: 999px;
+      border: 1px solid rgba(46, 59, 83, 0.9);
+      background: rgba(11, 15, 24, 0.98);
+      color: var(--text);
+      padding: 6px 9px;
+      font-size: 11px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.12s ease-out, box-shadow 0.12s.ease-out, background 0.12s ease-out;
+    }
+
+    textarea {
+      border-radius: 10px;
+      resize: vertical;
+      min-height: 60px;
+    }
+
+    input:focus,
+    textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(255, 122, 60, 0.4);
+      background: rgba(11, 16, 26, 0.98);
+    }
+
+    select {
+      border-radius: 999px;
+      border: 1px solid rgba(46, 59, 83, 0.9);
+      background: rgba(11, 15, 24, 0.98);
+      color: var(--text);
+      padding: 6px 9px;
+      font-size: 11px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.12s ease-out, box-shadow 0.12s.ease-out, background 0.12s.ease-out;
+    }
+
+    select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(255, 122, 60, 0.4);
+      background: rgba(11, 16, 26, 0.98);
+    }
+
+    .form-footer {
+      margin-top: 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .hint {
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    .log {
+      font-size: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      color: var(--text-muted);
+      opacity: 0.85;
+    }
+
+    .log strong {
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    .log .error {
+      color: var(--danger);
+    }
+
+    .log .ok {
+      color: var(--success);
+    }
+
+    .orders-kpi {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+
+    .kpi-pill {
+      border-radius: 999px;
+      border: 1px solid rgba(39, 52, 82, 0.9);
+      background: rgba(9, 13, 23, 0.96);
+      padding: 4px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 90px;
+    }
+
+    .kpi-label {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .kpi-value {
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .orders-filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+
+    .orders-filters .filter-input {
+      min-width: 140px;
+    }
+
+    footer {
+      padding: 6px 18px 10px;
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      border-top: 1px solid rgba(15, 23, 42, 0.9);
+      background: radial-gradient(circle at 50% 0, rgba(15, 23, 42, 0.94), rgba(2, 6, 23, 1));
+    }
+
+    footer span {
+      white-space: nowrap;
+    }
+
+    footer .footer-left {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    footer .footer-right {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="brand-mark"></div>
+      <div>
+        <div class="brand-title">DevFactory • DevOrders</div>
+        <div class="brand-sub">FoxProFlow Earth Stack · Org growth stream</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="pill">
+        <span class="pill-dot"></span>
+        <span>API <span class="mono">/api/devorders</span></span>
+      </div>
+      <div class="pill-small">
+        Local · <span class="mono">http://localhost:8080</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- ЛЕВАЯ ПАНЕЛЬ: СПИСОК ЗАКАЗОВ + KPI -->
+    <section class="panel" id="orders-panel">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">
+            <span class="icon">📦</span>
+            <span>Список DevOrders</span>
+          </div>
+          <div class="panel-subtitle">Последние заказы DevFactory из dev.dev_order</div>
+        </div>
+        <div class="orders-controls">
+          <button class="btn" id="btn-refresh">Обновить</button>
+          <span class="muted">Всего: <span id="orders-count" class="mono">0</span></span>
+        </div>
+      </div>
+
+      <!-- KPI по DevOrders -->
+      <div class="orders-kpi">
+        <div class="kpi-pill">
+          <div class="kpi-label">Новые</div>
+          <div class="kpi-value" id="kpi-new">0</div>
+        </div>
+        <div class="kpi-pill">
+          <div class="kpi-label">В работе</div>
+          <div class="kpi-value" id="kpi-in-progress">0</div>
+        </div>
+        <div class="kpi-pill">
+          <div class="kpi-label">Завершённые</div>
+          <div class="kpi-value" id="kpi-done">0</div>
+        </div>
+        <div class="kpi-pill">
+          <div class="kpi-label">Сумма (total_amount)</div>
+          <div class="kpi-value" id="kpi-total">0</div>
+        </div>
+      </div>
+
+      <!-- Фильтры -->
+      <div class="orders-filters">
+        <input
+          type="text"
+          id="orders-filter-text"
+          class="filter-input"
+          placeholder="Фильтр по заголовку / ID"
+        />
+        <select id="orders-filter-status" class="filter-input">
+          <option value="">Все статусы</option>
+          <option value="new">new</option>
+          <option value="analysis">analysis</option>
+          <option value="proposal">proposal</option>
+          <option value="in_progress">in_progress</option>
+          <option value="awaiting_review">awaiting_review</option>
+          <option value="completed">completed</option>
+          <option value="delivered">delivered</option>
+          <option value="paid">paid</option>
+          <option value="archived">archived</option>
+          <option value="cancelled">cancelled</option>
+          <option value="failed">failed</option>
+        </select>
+      </div>
+
+      <div class="orders-list-container">
+        <div class="orders-header-row">
+          <div>Заказ</div>
+          <div>Статус</div>
+          <div>Сумма</div>
+          <div>Создан</div>
+        </div>
+        <div class="orders-body" id="orders-body">
+          <!-- строки заполняются JS -->
+        </div>
+      </div>
+      <div class="hint">
+        Клик по строке → правый блок покажет детали и commercial-context.
+      </div>
+    </section>
+
+    <!-- ПРАВАЯ ПАНЕЛЬ: ДЕТАЛИ + СВЯЗИ + СОЗДАНИЕ -->
+    <section class="panel" id="details-panel">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">
+            <span class="icon">🧬</span>
+            <span>DevOrder · детали &amp; контекст</span>
+          </div>
+          <div class="panel-subtitle">Тело заказа + коммерческий контур</div>
+        </div>
+      </div>
+
+      <div class="details-grid">
+        <!-- Детали выбранного заказа -->
+        <div class="details-section" id="order-details-section">
+          <header>
+            <h3>Selected DevOrder</h3>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <button class="btn" type="button" id="btn-open-tasks" disabled>
+                Открыть DevTasks
+              </button>
+              <span class="mono muted" id="current-order-id">—</span>
+            </div>
+          </header>
+          <div id="order-details-body">
+            <div class="hint">
+              Выберите заказ слева, чтобы увидеть его поля.
+            </div>
+          </div>
+        </div>
+
+        <!-- Commercial Context -->
+        <div class="details-section" id="context-section">
+          <header>
+            <h3>Commercial Context</h3>
+            <button class="btn" id="btn-reload-context" disabled>Обновить контекст</button>
+          </header>
+          <div id="context-body">
+            <div class="hint">
+              После выбора заказа здесь появятся tenant / billing / lead-связи из
+              <span class="mono">dev.v_dev_order_commercial_ctx</span>.
+            </div>
+          </div>
+        </div>
+
+        <!-- Links / CRM + Billing -->
+        <div class="details-section" id="links-section">
+          <header>
+            <h3>Links / CRM &amp; Billing</h3>
+          </header>
+
+          <div class="form" id="links-form">
+            <div class="form-group">
+              <label for="tenant_id">CRM tenant_id (UUID)</label>
+              <input
+                type="text"
+                id="tenant_id"
+                name="tenant_id"
+                placeholder="UUID из crm.tenant.id"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="lead_code">CRM lead code</label>
+              <input
+                type="text"
+                id="lead_code"
+                name="lead_code"
+                placeholder="например, deal-123 или crm-lead-001"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="billing_type">Billing link</label>
+              <select id="billing_type" name="billing_type">
+                <option value="subscription">Подписка (billing.subscription)</option>
+                <option value="invoice">Счёт (billing.invoice)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="billing_id">Billing id (UUID)</label>
+              <input
+                type="text"
+                id="billing_id"
+                name="billing_id"
+                placeholder="UUID из billing.subscription/id или billing.invoice/id"
+              />
+            </div>
+          </div>
+
+          <div class="form-footer">
+            <div class="hint">
+              <div>Tenant: <span class="mono">POST /api/devorders/{id}/link/tenant</span></div>
+              <div>Billing: <span class="mono">POST /api/devorders/{id}/link/billing</span></div>
+              <div>Lead: <span class="mono">POST /api/devorders/{id}/link/lead</span> с автообновлением <span class="mono">commercial-context</span>.</div>
+            </div>
+            <div>
+              <button class="btn" id="btn-link-tenant" type="button" disabled>
+                Обновить tenant
+              </button>
+              <button class="btn" id="btn-link-billing" type="button" disabled>
+                Обновить billing
+              </button>
+              <button class="btn" id="btn-link-lead" type="button" disabled>
+                Обновить CRM lead
+              </button>
+            </div>
+          </div>
+
+          <div class="log" id="links-log"></div>
+        </div>
+
+        <!-- Форма создания заказа -->
+        <div class="details-section" id="create-section">
+          <header>
+            <h3>Create DevOrder</h3>
+          </header>
+
+          <form class="form" id="create-form">
+            <div class="form-group full">
+              <label for="title">Заголовок *</label>
+              <input type="text" id="title" name="title" required value="Новый заказ DevFactory" />
+            </div>
+
+            <div class="form-group full">
+              <label for="description">Описание</label>
+              <textarea id="description" name="description" placeholder="Кратко опишите суть заказа"></textarea>
+            </div>
+
+            <div class="form-group">
+              <label for="customer_name">Клиент</label>
+              <input type="text" id="customer_name" name="customer_name" placeholder="Demo Customer" />
+            </div>
+
+            <div class="form-group">
+              <label for="order_tenant_external_id">Внешний tenant_id</label>
+              <input type="text" id="order_tenant_external_id" name="order_tenant_external_id" placeholder="demo-tenant-external-001" />
+            </div>
+
+            <div class="form-group">
+              <label for="total_amount">Сумма</label>
+              <input type="number" step="0.01" id="total_amount" name="total_amount" placeholder="10000" />
+            </div>
+
+            <div class="form-group">
+              <label for="currency_code">Валюта</label>
+              <input type="text" id="currency_code" name="currency_code" placeholder="RUB" />
+            </div>
+
+            <div class="form-group">
+              <label for="status">Статус</label>
+              <input type="text" id="status" name="status" value="new" />
+            </div>
+          </form>
+
+          <div class="form-footer">
+            <div class="hint">
+              При создании используется <span class="mono">POST /api/devorders</span>.<br />
+              Это прямой нерв к <span class="mono">dev.dev_order</span>.
+            </div>
+            <div>
+              <button class="btn" id="btn-reset-form" type="button">Сбросить</button>
+              <button class="btn primary" id="btn-create-order" type="button">Создать заказ</button>
+            </div>
+          </div>
+
+          <div class="log" id="create-log"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="footer-left">
+      <span>FoxProFlow DevFactory</span>
+      <span class="muted">DevOrders Console · v1.0</span>
+    </div>
+    <div class="footer-right">
+      <span class="muted">Источник данных: /api/devorders &amp; /api/devorders/{id}</span>
+    </div>
+  </footer>
+
+  <script>
+    const API_BASE = ""; // same origin (http://localhost:8080)
+
+    const ordersBodyEl = document.getElementById("orders-body");
+    const ordersCountEl = document.getElementById("orders-count");
+    const currentOrderIdEl = document.getElementById("current-order-id");
+    const orderDetailsBodyEl = document.getElementById("order-details-body");
+    const contextBodyEl = document.getElementById("context-body");
+    const btnRefresh = document.getElementById("btn-refresh");
+    const btnReloadContext = document.getElementById("btn-reload-context");
+    const btnCreateOrder = document.getElementById("btn-create-order");
+    const btnResetForm = document.getElementById("btn-reset-form");
+    const createForm = document.getElementById("create-form");
+    const createLogEl = document.getElementById("create-log");
+    const btnOpenTasks = document.getElementById("btn-open-tasks");
+
+    // элементы для links / CRM / Billing
+    const tenantIdInput = document.getElementById("tenant_id");
+    const leadCodeInput = document.getElementById("lead_code");
+    const billingTypeInput = document.getElementById("billing_type");
+    const billingIdInput = document.getElementById("billing_id");
+    const btnLinkTenant = document.getElementById("btn-link-tenant");
+    const btnLinkBilling = document.getElementById("btn-link-billing");
+    const btnLinkLead = document.getElementById("btn-link-lead");
+    const linksLogEl = document.getElementById("links-log");
+
+    // элементы для KPI и фильтров
+    const kpiNewEl = document.getElementById("kpi-new");
+    const kpiInProgressEl = document.getElementById("kpi-in-progress");
+    const kpiDoneEl = document.getElementById("kpi-done");
+    const kpiTotalEl = document.getElementById("kpi-total");
+    const ordersFilterTextEl = document.getElementById("orders-filter-text");
+    const ordersFilterStatusEl = document.getElementById("orders-filter-status");
+
+    let currentOrderId = null;
+    let lastOrders = [];
+
+    function fmtDate(iso) {
+      if (!iso) return "—";
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return iso;
+      return d.toLocaleString();
+    }
+
+    function fmtAmount(a, currency) {
+      if (a === null || a === undefined) return "—";
+      let formatted = a;
+      try {
+        formatted = Number(a).toLocaleString(undefined, {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        });
+      } catch (e) {}
+      return currency ? `${formatted} ${currency}` : String(formatted);
+    }
+
+    function clearChildren(el) {
+      while (el.firstChild) {
+        el.removeChild(el.firstChild);
+      }
+    }
+
+    function setLog(message, type = "info") {
+      if (!createLogEl) return;
+      if (!message) {
+        createLogEl.textContent = "";
+        return;
+      }
+      const cls = type === "error" ? "error" : type === "ok" ? "ok" : "";
+      createLogEl.innerHTML = `<span class="${cls}">${message}</span>`;
+    }
+
+    function setLinksLog(message, type = "info") {
+      if (!linksLogEl) return;
+      if (!message) {
+        linksLogEl.textContent = "";
+        return;
+      }
+      const cls = type === "error" ? "error" : type === "ok" ? "ok" : "";
+      linksLogEl.innerHTML = `<span class="${cls}">${message}</span>`;
+    }
+
+    function statusTagClassFor(status) {
+      const s = (status || "").toLowerCase();
+      if (s === "new") return "tag status-new";
+      if (["analysis", "proposal", "in_progress", "awaiting_review"].includes(s)) {
+        return "tag status-progress";
+      }
+      if (["completed", "delivered", "paid", "archived", "closed"].includes(s)) {
+        return "tag status-done";
+      }
+      if (["cancelled", "failed", "error", "rejected"].includes(s)) {
+        return "tag status-failed";
+      }
+      return "tag";
+    }
+
+    function updateOrdersKpi(orders) {
+      const list = Array.isArray(orders) ? orders : [];
+      let newCount = 0;
+      let inProgressCount = 0;
+      let doneCount = 0;
+      let totalAmount = 0;
+
+      for (const order of list) {
+        const s = (order.order_status || "").toLowerCase();
+        const amount = Number(order.total_amount ?? 0);
+        if (Number.isFinite(amount)) totalAmount += amount;
+
+        if (s === "new") newCount++;
+        else if (["analysis", "proposal", "in_progress", "awaiting_review"].includes(s)) {
+          inProgressCount++;
+        } else if (["completed", "delivered", "paid", "archived", "closed"].includes(s)) {
+          doneCount++;
+        }
+      }
+
+      if (kpiNewEl) kpiNewEl.textContent = String(newCount);
+      if (kpiInProgressEl) kpiInProgressEl.textContent = String(inProgressCount);
+      if (kpiDoneEl) kpiDoneEl.textContent = String(doneCount);
+      if (kpiTotalEl) kpiTotalEl.textContent = fmtAmount(totalAmount, null);
+    }
+
+    async function loadOrders() {
+      btnRefresh.disabled = true;
+      try {
+        const url = `${API_BASE}/api/devorders?limit=50&offset=0`;
+        const res = await fetch(url, { method: "GET" });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        const list = Array.isArray(data)
+          ? data
+          : Array.isArray(data.orders)
+          ? data.orders
+          : Array.isArray(data.items)
+          ? data.items
+          : [];
+        renderOrders(list);
+      } catch (err) {
+        console.error("loadOrders error:", err);
+        ordersCountEl.textContent = "0";
+        lastOrders = [];
+        updateOrdersKpi(lastOrders);
+        clearChildren(ordersBodyEl);
+        const row = document.createElement("div");
+        row.className = "orders-row";
+        row.innerHTML = `<div class="muted">Ошибка загрузки заказов: ${err.message}</div>`;
+        ordersBodyEl.appendChild(row);
+      } finally {
+        btnRefresh.disabled = false;
+      }
+    }
+
+    function renderOrders(orders) {
+      lastOrders = Array.isArray(orders) ? orders : [];
+      ordersCountEl.textContent = lastOrders.length;
+      applyOrdersFilterAndRender();
+    }
+
+    function applyOrdersFilterAndRender() {
+      let list = lastOrders.slice();
+
+      const text = (ordersFilterTextEl?.value || "").trim().toLowerCase();
+      const statusFilter = (ordersFilterStatusEl?.value || "").toLowerCase();
+
+      if (text) {
+        list = list.filter((order) => {
+          const title = (order.order_title || "").toLowerCase();
+          const id = (order.dev_order_id || "").toLowerCase();
+          return title.includes(text) || id.includes(text);
+        });
+      }
+
+      if (statusFilter) {
+        list = list.filter(
+          (order) => (order.order_status || "").toLowerCase() === statusFilter
+        );
+      }
+
+      updateOrdersKpi(list.length ? list : lastOrders);
+      renderOrdersList(list);
+    }
+
+    function renderOrdersList(orders) {
+      clearChildren(ordersBodyEl);
+
+      if (!orders || orders.length === 0) {
+        const row = document.createElement("div");
+        row.className = "orders-row";
+        row.innerHTML = `<div class="muted">Заказы не найдены по текущему фильтру.</div>`;
+        ordersBodyEl.appendChild(row);
+        return;
+      }
+
+      for (const order of orders) {
+        const row = document.createElement("div");
+        row.className = "orders-row";
+        row.dataset.orderId = order.dev_order_id;
+
+        const statusTagClass = statusTagClassFor(order.order_status);
+
+        row.innerHTML = `
+          <div class="mono">${order.order_title || "—"}</div>
+          <div><span class="${statusTagClass}"><span class="tag-dot"></span>${order.order_status}</span></div>
+          <div>${fmtAmount(order.total_amount, order.currency_code)}</div>
+          <div class="muted mono">${fmtDate(order.order_created_at)}</div>
+        `;
+
+        row.addEventListener("click", () => {
+          selectOrderRow(order.dev_order_id);
+          loadOrderDetails(order.dev_order_id);
+        });
+
+        ordersBodyEl.appendChild(row);
+      }
+
+      if (!currentOrderId && orders.length > 0) {
+        const firstId = orders[0].dev_order_id;
+        selectOrderRow(firstId);
+        loadOrderDetails(firstId);
+      }
+    }
+
+    function selectOrderRow(orderId) {
+      currentOrderId = orderId;
+      currentOrderIdEl.textContent = orderId || "—";
+
+      const rows = ordersBodyEl.querySelectorAll(".orders-row");
+      rows.forEach((row) => {
+        if (row.dataset.orderId === orderId) {
+          row.classList.add("selected");
+        } else {
+          row.classList.remove("selected");
+        }
+      });
+
+      btnReloadContext.disabled = !orderId;
+
+      if (btnLinkTenant) btnLinkTenant.disabled = !orderId;
+      if (btnLinkBilling) btnLinkBilling.disabled = !orderId;
+      if (btnLinkLead) btnLinkLead.disabled = !orderId;
+      if (btnOpenTasks) btnOpenTasks.disabled = !orderId;
+
+      setLinksLog("");
+    }
+
+    async function loadOrderDetails(orderId) {
+      if (!orderId) return;
+      const detailsBodyEl = document.getElementById("order-details-body");
+      detailsBodyEl.innerHTML = `<div class="hint">Загрузка данных DevOrder…</div>`;
+
+      try {
+        const url = `${API_BASE}/api/devorders/${encodeURIComponent(orderId)}`;
+        const res = await fetch(url, { method: "GET" });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const order = await res.json();
+        renderOrderDetails(order);
+        await loadOrderContext(orderId);
+      } catch (err) {
+        console.error("loadOrderDetails error:", err);
+        detailsBodyEl.innerHTML = `<div class="hint">Ошибка загрузки заказа: ${err.message}</div>`;
+        contextBodyEl.innerHTML = `<div class="hint">Контекст недоступен из-за ошибки заказа.</div>`;
+      }
+    }
+
+    function renderOrderDetails(order) {
+      const detailsBodyEl = document.getElementById("order-details-body");
+      const statusTagClass = statusTagClassFor(order.order_status);
+
+      const html = `
+        <div class="details-row">
+          <div class="details-row-label">ID заказа</div>
+          <div class="details-row-value mono">${order.dev_order_id}</div>
+        </div>
+        <div class="details-row">
+          <div class="details-row-label">Статус</div>
+          <div class="details-row-value">
+            <span class="${statusTagClass}">
+              <span class="tag-dot"></span>${order.order_status}
+            </span>
+          </div>
+        </div>
+        <div class="details-row">
+          <div class="details-row-label">Заголовок</div>
+          <div class="details-row-value">${order.order_title || "—"}</div>
+        </div>
+        <div class="details-row">
+          <div class="details-row-label">Сумма</div>
+          <div class="details-row-value">${fmtAmount(order.total_amount, order.currency_code)}</div>
+        </div>
+        <div class="details-row">
+          <div class="details-row-label">Создан</div>
+          <div class="details-row-value mono">${fmtDate(order.order_created_at)}</div>
+        </div>
+        <div class="details-row">
+          <div class="details-row-label">Обновлён</div>
+          <div class="details-row-value mono">${fmtDate(order.order_updated_at)}</div>
+        </div>
+      `;
+      detailsBodyEl.innerHTML = html;
+    }
+
+    async function loadOrderContext(orderId) {
+      if (!orderId) return;
+      try {
+        const url = `${API_BASE}/api/devorders/${encodeURIComponent(orderId)}/commercial-context`;
+        const res = await fetch(url, { method: "GET" });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const ctx = await res.json();
+        renderOrderContext(ctx);
+      } catch (err) {
+        console.error("loadOrderContext error:", err);
+        contextBodyEl.innerHTML = `<div class="hint">Ошибка загрузки commercial-context: ${err.message}</div>`;
+      }
+    }
+
+    function renderOrderContext(ctx) {
+      const html = `
+        <div class="details-row">
+          <div class="details-row-label">Описание</div>
+          <div class="details-row-value">${ctx.order_description || "—"}</div>
+        </div>
+        <div class="details-row">
+          <div class="details-row-label">Клиент</div>
+          <div class="details-row-value">${ctx.customer_name || "—"}</div>
+        </div>
+        <div class="details-row">
+          <div class="details-row-label">Tenant ext</div>
+          <div class="details-row-value mono">${ctx.order_tenant_external_id || "—"}</div>
+        </div>
+        <div class="details-row">
+          <div class="details-row-label">CRM tenant</div>
+          <div class="details-row-value mono">${ctx.crm_tenant_id || "—"}</div>
+        </div>
+        <div class="details-row">
+          <div class="details-row-label">Billing subscription</div>
+          <div class="details-row-value mono">
+            ${(ctx.billing_subscription_table || "—")} / ${(ctx.billing_subscription_id || "—")}
+          </div>
+        </div>
+        <div class="details-row">
+          <div class="details-row-label">Billing invoice</div>
+          <div class="details-row-value mono">
+            ${(ctx.billing_invoice_table || "—")} / ${(ctx.billing_invoice_id || "—")}
+          </div>
+        </div>
+        <div class="details-row">
+          <div class="details-row-label">CRM lead code</div>
+          <div class="details-row-value mono">${ctx.crm_lead_code || "—"}</div>
+        </div>
+      `;
+      contextBodyEl.innerHTML = html;
+
+      if (tenantIdInput) {
+        tenantIdInput.value = ctx.crm_tenant_id || "";
+      }
+
+      if (billingTypeInput && billingIdInput) {
+        if (ctx.billing_subscription_id) {
+          billingTypeInput.value = "subscription";
+          billingIdInput.value = ctx.billing_subscription_id || "";
+        } else if (ctx.billing_invoice_id) {
+          billingTypeInput.value = "invoice";
+          billingIdInput.value = ctx.billing_invoice_id || "";
+        } else {
+          billingIdInput.value = "";
+        }
+      }
+
+      if (leadCodeInput) {
+        leadCodeInput.value = ctx.crm_lead_code || "";
+      }
+    }
+
+    async function createOrder() {
+      setLog("");
+      btnCreateOrder.disabled = true;
+
+      const formData = new FormData(createForm);
+      const payload = {
+        title: formData.get("title") || "",
+        description: formData.get("description") || null,
+        customer_name: formData.get("customer_name") || null,
+        order_tenant_external_id: formData.get("order_tenant_external_id") || null,
+        total_amount: formData.get("total_amount")
+          ? Number(formData.get("total_amount"))
+          : null,
+        currency_code: formData.get("currency_code") || null,
+        status: formData.get("status") || "new"
+      };
+
+      if (!payload.title) {
+        setLog("Заголовок обязателен.", "error");
+        btnCreateOrder.disabled = false;
+        return;
+      }
+
+      try {
+        const url = `${API_BASE}/api/devorders`;
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        const text = await res.text();
+        let data = null;
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch (e) {
+          console.warn("createOrder: non-JSON response", text);
+        }
+
+        if (!res.ok) {
+          console.error("createOrder error:", res.status, text);
+          const detail = data && data.detail ? data.detail : `HTTP ${res.status}`;
+          setLog(`Ошибка создания заказа: ${detail}`, "error");
+          return;
+        }
+
+        setLog(`Создан заказ <strong>${data.dev_order_id}</strong>`, "ok");
+        await loadOrders();
+        if (data && data.dev_order_id) {
+          selectOrderRow(data.dev_order_id);
+          await loadOrderDetails(data.dev_order_id);
+        }
+      } catch (err) {
+        console.error("createOrder exception:", err);
+        setLog(`Ошибка: ${err.message}`, "error");
+      } finally {
+        btnCreateOrder.disabled = false;
+      }
+    }
+
+    async function linkLead() {
+      setLinksLog("");
+      if (!currentOrderId) {
+        setLinksLog("Сначала выберите заказ слева.", "error");
+        return;
+      }
+
+      const leadCode = (leadCodeInput && leadCodeInput.value || "").trim();
+      if (!leadCode) {
+        setLinksLog("Укажите CRM lead code.", "error");
+        return;
+      }
+
+      if (btnLinkLead) btnLinkLead.disabled = true;
+
+      try {
+        const url = `${API_BASE}/api/devorders/${encodeURIComponent(
+          currentOrderId
+        )}/link/lead`;
+
+        const payload = { lead_code: leadCode };
+
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        const text = await res.text();
+        let data = null;
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch (e) {}
+
+        if (!res.ok) {
+          console.error("linkLead error:", res.status, text);
+          const detail = data && data.detail ? data.detail : `HTTP ${res.status}`;
+          setLinksLog(`Ошибка привязки lead: ${detail}`, "error");
+          return;
+        }
+
+        setLinksLog("CRM lead успешно обновлён.", "ok");
+        await loadOrderContext(currentOrderId);
+      } catch (err) {
+        console.error("linkLead exception:", err);
+        setLinksLog(`Ошибка: ${err.message}`, "error");
+      } finally {
+        if (btnLinkLead) btnLinkLead.disabled = !currentOrderId;
+      }
+    }
+
+    async function linkTenant() {
+      setLinksLog("");
+      if (!currentOrderId) {
+        setLinksLog("Сначала выберите заказ слева.", "error");
+        return;
+      }
+
+      const tenantId = (tenantIdInput && tenantIdInput.value || "").trim();
+      if (!tenantId) {
+        setLinksLog("Укажите CRM tenant_id (UUID).", "error");
+        return;
+      }
+
+      if (btnLinkTenant) btnLinkTenant.disabled = true;
+
+      try {
+        const url = `${API_BASE}/api/devorders/${encodeURIComponent(
+          currentOrderId
+        )}/link/tenant`;
+
+        const payload = { tenant_id: tenantId };
+
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        const text = await res.text();
+        let data = null;
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch (e) {}
+
+        if (!res.ok) {
+          console.error("linkTenant error:", res.status, text);
+          const detail = data && data.detail ? data.detail : `HTTP ${res.status}`;
+          setLinksLog(`Ошибка привязки tenant: ${detail}`, "error");
+          return;
+        }
+
+        setLinksLog("CRM tenant успешно обновлён.", "ok");
+        await loadOrderContext(currentOrderId);
+      } catch (err) {
+        console.error("linkTenant exception:", err);
+        setLinksLog(`Ошибка: ${err.message}`, "error");
+      } finally {
+        if (btnLinkTenant) btnLinkTenant.disabled = !currentOrderId;
+      }
+    }
+
+    async function linkBilling() {
+      setLinksLog("");
+      if (!currentOrderId) {
+        setLinksLog("Сначала выберите заказ слева.", "error");
+        return;
+      }
+
+      const billingId = (billingIdInput && billingIdInput.value || "").trim();
+      if (!billingId) {
+        setLinksLog("Укажите billing id (UUID).", "error");
+        return;
+      }
+
+      const billingType = (billingTypeInput && billingTypeInput.value) || "subscription";
+      const linkType =
+        billingType === "invoice" ? "billing_invoice" : "billing_subscription";
+      const billingTable =
+        billingType === "invoice" ? "billing.invoice" : "billing.subscription";
+
+      if (btnLinkBilling) btnLinkBilling.disabled = true;
+
+      try {
+        const url = `${API_BASE}/api/devorders/${encodeURIComponent(
+          currentOrderId
+        )}/link/billing`;
+
+        const payload = {
+          link_type: linkType,
+          billing_table: billingTable,
+          billing_id: billingId
+        };
+
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        const text = await res.text();
+        let data = null;
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch (e) {}
+
+        if (!res.ok) {
+          console.error("linkBilling error:", res.status, text);
+          const detail = data && data.detail ? data.detail : `HTTP ${res.status}`;
+          setLinksLog(`Ошибка привязки billing: ${detail}`, "error");
+          return;
+        }
+
+        setLinksLog("Billing-связь успешно обновлена.", "ok");
+        await loadOrderContext(currentOrderId);
+      } catch (err) {
+        console.error("linkBilling exception:", err);
+        setLinksLog(`Ошибка: ${err.message}`, "error");
+      } finally {
+        if (btnLinkBilling) btnLinkBilling.disabled = !currentOrderId;
+      }
+    }
+
+    function resetForm() {
+      createForm.reset();
+      document.getElementById("title").value = "Новый заказ DevFactory";
+      document.getElementById("status").value = "new";
+      setLog("");
+    }
+
+    btnRefresh.addEventListener("click", () => {
+      loadOrders();
+    });
+
+    btnReloadContext.addEventListener("click", () => {
+      if (currentOrderId) {
+        loadOrderContext(currentOrderId);
+      }
+    });
+
+    btnCreateOrder.addEventListener("click", () => {
+      createOrder();
+    });
+
+    btnResetForm.addEventListener("click", () => {
+      resetForm();
+    });
+
+    if (btnOpenTasks) {
+      btnOpenTasks.addEventListener("click", () => {
+        if (!currentOrderId) return;
+        const url = `/static/devfactory/devtasks_console.html?dev_order_id=${encodeURIComponent(
+          currentOrderId
+        )}`;
+        window.open(url, "_blank");
+      });
+    }
+
+    if (btnLinkLead) {
+      btnLinkLead.addEventListener("click", () => {
+        linkLead();
+      });
+    }
+
+    if (btnLinkTenant) {
+      btnLinkTenant.addEventListener("click", () => {
+        linkTenant();
+      });
+    }
+
+    if (btnLinkBilling) {
+      btnLinkBilling.addEventListener("click", () => {
+        linkBilling();
+      });
+    }
+
+    if (ordersFilterTextEl) {
+      ordersFilterTextEl.addEventListener("input", () => {
+        applyOrdersFilterAndRender();
+      });
+    }
+
+    if (ordersFilterStatusEl) {
+      ordersFilterStatusEl.addEventListener("change", () => {
+        applyOrdersFilterAndRender();
+      });
+    }
+
+    window.addEventListener("load", () => {
+      loadOrders();
+    });
+  </script>
+</body>
+</html>
