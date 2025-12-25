@@ -60,12 +60,17 @@ param(
 )
 
 # NOTE: DO NOT place any executable statements before [CmdletBinding]/param.
-$VERSION = "2025-12-25.det.v5"
+$VERSION = "2025-12-26.det.v6"
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 try { $OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+
+# Silence docker compose warnings about missing pgAdmin env vars (local-only; no compose/env changes)
+# (Keep also here for direct invocation of ff-release-m0.ps1 without wrapper.)
+if ([string]::IsNullOrWhiteSpace($env:PGADMIN_EMAIL))    { $env:PGADMIN_EMAIL    = "disabled@local" }
+if ([string]::IsNullOrWhiteSpace($env:PGADMIN_PASSWORD)) { $env:PGADMIN_PASSWORD = "disabled" }
 
 function Now-Stamp { (Get-Date).ToString("yyyyMMdd_HHmmss") }
 function Now-Iso   { (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss.fffK") }
@@ -83,7 +88,18 @@ function Write-Fail([string]$msg) { Write-Host ("FAIL: " + $msg) -ForegroundColo
 function Normalize-BaseUrl([string]$u) {
   if ([string]::IsNullOrWhiteSpace($u)) { return "http://127.0.0.1:8080" }
   if ($u -match "localhost") { $u = ($u -replace "localhost","127.0.0.1") }
-  return $u.TrimEnd("/")
+  $u = $u.Trim()
+  while ($u.EndsWith("/")) { $u = $u.Substring(0, $u.Length - 1) }
+  return $u
+}
+
+function Normalize-ReleaseId([string]$rid) {
+  if ([string]::IsNullOrWhiteSpace($rid)) { return $rid }
+  $rid = $rid.Trim()
+  # safe for dir + docker tag: [A-Za-z0-9_.-]
+  $rid = ($rid -replace '[^A-Za-z0-9_.-]', '_').Trim('_')
+  if ([string]::IsNullOrWhiteSpace($rid)) { throw "ReleaseId sanitized to empty. Provide a valid ReleaseId." }
+  return $rid
 }
 
 function Resolve-ComposeFile([string]$repoRoot, [string]$composeFile) {
@@ -181,10 +197,16 @@ function Write-RollbackStory([string]$path, [hashtable]$ctx) {
   if ($ctx.backup_dir) { $t += ("backup_dir: {0}" -f $ctx.backup_dir) }
   if ($ctx.rollback_image_tag) { $t += ("rollback_image_tag: {0}" -f $ctx.rollback_image_tag) }
   $t += ""
+
   $t += "## Быстрый откат"
-  $t += "1) cd `"$($ctx.repo_root)`""
+  $t += ("1) cd `"{0}`"" -f $ctx.repo_root)
   $t += ("2) git reset --hard {0}" -f $ctx.pre_sha)
-  $t += "3) docker compose up -d --build api worker beat"
+
+  $dc = "docker compose"
+  if ($ctx.compose_file) { $dc += " -f `"$($ctx.compose_file)`"" }
+  if ($ctx.project_name) { $dc += " -p $($ctx.project_name)" }
+  $t += ("3) {0} up -d --build api worker beat" -f $dc)
+
   $t += ("4) curl.exe -4 --http1.1 --noproxy 127.0.0.1 `"{0}/health/extended`"" -f $ctx.base_url)
   $t += ""
   Set-Utf8 $path ($t -join "`n")
@@ -415,13 +437,22 @@ if ([string]::IsNullOrWhiteSpace($ComposeFile)) {
 }
 
 if (-not $ReleaseId) { $ReleaseId = ("m0_{0}" -f (Now-Stamp)) }
+$ReleaseId = Normalize-ReleaseId $ReleaseId
+
 if ([string]::IsNullOrWhiteSpace($BackupDir)) { $BackupDir = Join-Path $repoRoot "ops\_backups" }
 if ($ArchitectKey) { $env:FF_ARCHITECT_KEY = $ArchitectKey }
 $env:API_BASE = $BaseUrl
 
-$evName = ($ReleaseId -like "release_m0_*") ? $ReleaseId : ("release_m0_" + $ReleaseId)
+# evidence naming: avoid "release_m0_m0_<stamp>" when ReleaseId already has "m0_" prefix
+$evSuffix = $ReleaseId
+if ($ReleaseId -like "m0_*") { $evSuffix = ($ReleaseId -replace '^m0_', '') }
+$evName = ($ReleaseId -like "release_m0_*") ? $ReleaseId : ("release_m0_" + $evSuffix)
+
 $evidenceDir = Join-Path $repoRoot ("ops\_local\evidence\{0}" -f $evName)
 Ensure-Dir $evidenceDir
+
+# single canonical evidence line for callers/loggers
+Write-Output ("evidence: " + $evidenceDir)
 
 $started = Now-Iso
 $swAll = [System.Diagnostics.Stopwatch]::StartNew()
@@ -562,9 +593,6 @@ try {
   }
 
   Write-Step "MIGRATE"
-  Write-Host ("evidence: " + $evidenceDir) -ForegroundColor DarkGray
-  Write-Output ("evidence: " + $evidenceDir)
-
   if ($MigrateMode -eq "skip") {
     Write-Warn "MigrateMode=skip: skipping migrate"
     $steps.Add([pscustomobject]@{ name="migrate"; ok=$true; skipped=$true; ts=Now-Iso }) | Out-Null
@@ -767,8 +795,13 @@ try {
     } catch { }
   }
 
+  $stepsArray = @()
+  try { $stepsArray = @($steps.ToArray()) } catch { $stepsArray = @($steps) }
+
   try {
-    Set-Utf8 (Join-Path $evidenceDir "release_steps.json") (($steps | ConvertTo-Json -Depth 90))
+    $stepsJson = ($stepsArray | ConvertTo-Json -Depth 90)
+    Set-Utf8 (Join-Path $evidenceDir "release_steps.json") $stepsJson
+    Set-Utf8 (Join-Path $evidenceDir "steps.json") $stepsJson
   } catch { }
 
   $summary = [pscustomobject]@{
@@ -794,12 +827,14 @@ try {
     }
     git_pre  = $gitPre
     git_post = $gitPost
-    steps = $steps
-    compose_services = $composeServices
+    steps = $stepsArray
+    compose_services = @($composeServices)
   }
 
   try {
-    Set-Utf8 (Join-Path $evidenceDir "release_m0_summary.json") (($summary | ConvertTo-Json -Depth 95))
+    $summaryJson = ($summary | ConvertTo-Json -Depth 95)
+    Set-Utf8 (Join-Path $evidenceDir "release_m0_summary.json") $summaryJson
+    Set-Utf8 (Join-Path $evidenceDir "summary.json") $summaryJson
   } catch { }
 
   if ($ok -and $exitCode -eq 0) {
