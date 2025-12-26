@@ -7,7 +7,7 @@ Goals:
 - Stable env parsing across Windows host + Docker Desktop.
 - Hardened defaults, explicit broker/backend DSNs.
 - Safe "force bind" (avoid 127.0.0.1/localhost inside containers).
-- Autodiscover tasks and register beat schedule (optional; main schedule is anchored by register_tasks).
+- Deterministic task imports for Gate (worker inspect registered).
 
 NOTE:
 - This file must be import-safe: API routers may import Celery app for health/ops endpoints.
@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import re
+import sys
 from typing import Any, Dict, Optional
 
 from celery import Celery
@@ -66,13 +67,6 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-def _env_str(name: str, default: str = "") -> str:
-    v = os.getenv(name, "")
-    if v == "":
-        return default
-    return str(v)
-
-
 def _safe_json_loads(v: Optional[str]) -> Optional[Dict[str, Any]]:
     if not v:
         return None
@@ -81,6 +75,21 @@ def _safe_json_loads(v: Optional[str]) -> Optional[Dict[str, Any]]:
         return obj if isinstance(obj, dict) else None
     except Exception:
         return None
+
+
+def _is_celery_worker_or_beat() -> bool:
+    """
+    True only for real `celery ... worker|beat ...` process.
+    Avoid heavy bootstrap for API import and most celery CLI commands (inspect/report).
+    """
+    try:
+        argv = [str(a).lower() for a in sys.argv]
+        joined = " ".join(argv)
+        if "celery" not in joined:
+            return False
+        return ("worker" in argv) or ("beat" in argv) or (" worker " in joined) or (" beat " in joined)
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------
@@ -104,14 +113,6 @@ def _in_docker() -> bool:
 
 
 def _replace_localhost_in_dsn(dsn: str, host: str) -> str:
-    """
-    Replace host part for DSNs that point to localhost/127.0.0.1.
-
-    Handles:
-      - redis://localhost:6379/0
-      - postgresql://user:pass@127.0.0.1:5432/db
-      - amqp://guest:guest@localhost:5672//
-    """
     if not dsn:
         return dsn
     dsn = re.sub(r"(//)(localhost)([:/])", rf"\1{host}\3", dsn)
@@ -129,18 +130,6 @@ def _dsn_scheme(dsn: str) -> str:
 
 
 def _sanitize_env_for_container() -> None:
-    """
-    If we're in Docker, prevent common misconfig:
-      - Broker points to localhost (inside container => wrong)
-      - Redis backend points to localhost
-      - DB points to localhost
-
-    IMPORTANT FOR FoxProFlow:
-      - By default we replace to service-hosts (redis/postgres/rabbitmq),
-        not host.docker.internal.
-
-    This function MUST NOT raise.
-    """
     if not _in_docker():
         return
 
@@ -189,7 +178,7 @@ def _sanitize_env_for_container() -> None:
 
 
 # ---------------------------------------------------------------------
-# DSN builders (redis/postgres/rabbit)
+# DSN builders (redis/rabbit)
 # ---------------------------------------------------------------------
 
 _sanitize_env_for_container()
@@ -199,12 +188,6 @@ REDIS_PORT = _env_int("REDIS_PORT", 6379)
 REDIS_DB_BROKER = _env_int("REDIS_DB", 0)
 REDIS_DB_BACKEND = _env_int("REDIS_RESULT_DB", _env_int("REDIS_BACKEND_DB", 1))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
-
-POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")
-POSTGRES_PORT = _env_int("POSTGRES_PORT", 5432)
-POSTGRES_DB = os.getenv("POSTGRES_DB", os.getenv("POSTGRES_DATABASE", "foxproflow"))
-POSTGRES_USER = os.getenv("POSTGRES_USER", os.getenv("POSTGRES_USERNAME", "admin"))
-POSTGRES_PASSWORD_ENV = os.getenv("POSTGRES_PASSWORD", os.getenv("POSTGRES_PASS", ""))
 
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
 RABBITMQ_PORT = _env_int("RABBITMQ_PORT", 5672)
@@ -290,7 +273,7 @@ ENABLE_BEAT_HEARTBEAT = _env_bool("ENABLE_BEAT_HEARTBEAT", False)
 
 app = Celery("foxproflow", broker=CELERY_BROKER_URL, backend=CELERY_RESULT_BACKEND)
 
-# IMPORTANT: make this app current/default so shared_task binds correctly.
+# IMPORTANT: make this app current/default so shared_task binds correctly in this process.
 try:
     app.set_current()
     app.set_default()
@@ -348,7 +331,7 @@ if isinstance(BACKEND_TRANSPORT_OPTIONS, dict):
 app.conf.update(**_conf)
 
 # ---------------------------------------------------------------------
-# Optional: honor CELERY_INCLUDE / CELERY_IMPORTS (comma-separated)
+# Module lists for deterministic imports
 # ---------------------------------------------------------------------
 
 
@@ -395,15 +378,28 @@ ENV_IMPORTS = _split_modules(os.getenv("CELERY_IMPORTS", ""))
 ENV_INCLUDE = _split_modules(os.getenv("CELERY_INCLUDE", ""))
 
 MODULES = _dedupe(BASE_MODULES + ENV_IMPORTS + ENV_INCLUDE)
+
+# publish for Celery loader
 try:
     app.conf.imports = MODULES
     app.conf.include = MODULES
 except Exception:
-    # must not crash API import
     try:
         log.exception("celery: failed to apply app.conf.imports/include")
     except Exception:
         pass
+
+# Force-import configured modules in worker/beat runtime (this is the core Gate fix).
+# Relying on Celery internals is sometimes not enough in this project due to layered bootstraps.
+FF_CELERY_FORCE_IMPORT_DEFAULTS = _env_bool("FF_CELERY_FORCE_IMPORT_DEFAULTS", _is_celery_worker_or_beat())
+if FF_CELERY_FORCE_IMPORT_DEFAULTS:
+    try:
+        app.loader.import_default_modules()
+    except Exception:
+        try:
+            log.exception("celery: import_default_modules failed")
+        except Exception:
+            pass
 
 # ---------------------------------------------------------------------
 # Optional autodiscover (off by default; keep as knob)
@@ -476,7 +472,6 @@ try:
 except Exception:
     pass
 
-
 # ---------------------------------------------------------------------
 # Diagnostics helpers
 # ---------------------------------------------------------------------
@@ -492,11 +487,6 @@ def _mask_url(url: str) -> str:
                 creds, host = rest.split("@", 1)
                 user = creds.split(":", 1)[0]
                 return f"redis://{user}:{'***'}@{host}"
-        if url.startswith("postgresql://") and "@" in url:
-            scheme, rest = url.split("://", 1)
-            if "@" in rest and ":" in rest.split("@", 1)[0]:
-                user, _pwd = rest.split("@", 1)[0].split(":", 1)
-                return f"{scheme}://{user}:{'***'}@{rest.split('@',1)[1]}"
     except Exception:
         pass
     return url
@@ -518,6 +508,7 @@ def celery_env_summary() -> Dict[str, Any]:
         "enable_utc": CELERY_ENABLE_UTC,
         "default_queue": CELERY_DEFAULT_QUEUE,
         "imports_count": len(MODULES),
+        "force_import_defaults": FF_CELERY_FORCE_IMPORT_DEFAULTS,
         "tasks_registered": {k: _has_task(k) for k in CRITICAL_TASK_NAMES},
     }
 
@@ -530,7 +521,7 @@ def print_celery_env_summary() -> None:
 
 
 # ---------------------------------------------------------------------
-# Critical import anchors + registry check
+# Critical import anchors + registry check (log-only, must not crash)
 # ---------------------------------------------------------------------
 
 
@@ -545,7 +536,7 @@ def _safe_import(mod: str) -> None:
 
 
 def _ensure_critical_tasks_registered() -> None:
-    # import modules deterministically
+    # deterministic imports (do NOT rely only on loader)
     for m in [
         "src.worker.register_tasks",
         "src.worker.tasks_ops",
@@ -554,7 +545,16 @@ def _ensure_critical_tasks_registered() -> None:
     ]:
         _safe_import(m)
 
-    # check registry (log-only)
+    # second chance: loader import (worker/beat)
+    if FF_CELERY_FORCE_IMPORT_DEFAULTS:
+        try:
+            app.loader.import_default_modules()
+        except Exception:
+            try:
+                log.exception("celery: import_default_modules failed (second-chance)")
+            except Exception:
+                pass
+
     missing = [t for t in CRITICAL_TASK_NAMES if not _has_task(t)]
     if missing:
         try:
@@ -563,7 +563,6 @@ def _ensure_critical_tasks_registered() -> None:
             pass
 
 
-# Run once on import (safe for API; worker will also hit this on startup)
 try:
     _ensure_critical_tasks_registered()
 except Exception:
