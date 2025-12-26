@@ -21,7 +21,9 @@ import logging
 import os
 import re
 import sys
-from typing import Any, Dict, Optional
+import time
+from datetime import date, datetime, timezone
+from typing import Any, Dict, Optional, Tuple
 
 from celery import Celery
 from celery.schedules import crontab
@@ -71,18 +73,16 @@ def _safe_json_loads(v: Optional[str]) -> Optional[Dict[str, Any]]:
 def _is_celery_worker_or_beat() -> bool:
     """
     Best-effort: True only for real celery worker/beat runtime,
-    False for API imports and most celery CLI commands.
+    False for API imports and most celery CLI commands (inspect, shell, etc).
     """
     try:
         argv = [str(a).lower() for a in sys.argv]
         joined = " ".join(argv)
-        # common patterns:
-        #   celery -A ... worker
-        #   celery -A ... beat
-        #   python -m celery -A ... worker
-        if "worker" in argv or "beat" in argv:
-            return True
+        # python -m celery ... worker/beat
         if " worker " in joined or " beat " in joined:
+            return True
+        # celery ... worker|beat
+        if "worker" in argv or "beat" in argv:
             return True
         return False
     except Exception:
@@ -267,13 +267,16 @@ CELERY_TASK_SEND_SENT_EVENT = _env_bool("CELERY_TASK_SEND_SENT_EVENT", True)
 ENABLE_BEAT = _env_bool("ENABLE_BEAT", True)
 ENABLE_BEAT_HEARTBEAT = _env_bool("ENABLE_BEAT_HEARTBEAT", False)
 
+# Strict-mode: only fail-fast in actual worker/beat unless explicitly forced
+FF_CELERY_STRICT_TASKS = _env_bool("FF_CELERY_STRICT_TASKS", _is_celery_worker_or_beat())
+
 # ---------------------------------------------------------------------
 # Create Celery app
 # ---------------------------------------------------------------------
 
 app = Celery("foxproflow", broker=CELERY_BROKER_URL, backend=CELERY_RESULT_BACKEND)
 
-# IMPORTANT: bind shared_task to THIS app in this process.
+# Make app the default/current in THIS process (important for any shared_task usage)
 try:
     app.set_current()
     app.set_default()
@@ -331,8 +334,27 @@ if isinstance(BACKEND_TRANSPORT_OPTIONS, dict):
 app.conf.update(**_conf)
 
 # ---------------------------------------------------------------------
-# Deterministic module imports for Gate
+# Gate: critical task names + deterministic imports
 # ---------------------------------------------------------------------
+
+TASK_PLANNER_KPI_SNAPSHOT = "planner.kpi.snapshot"
+TASK_PLANNER_KPI_DAILY = "planner.kpi.daily_refresh"
+TASK_DEVFACTORY_DAILY = "analytics.devfactory.daily"
+TASK_DEVFACTORY_COMMERCIAL = "devfactory.commercial.run_order"
+
+CRITICAL_TASK_NAMES = [
+    TASK_PLANNER_KPI_SNAPSHOT,
+    TASK_PLANNER_KPI_DAILY,
+    TASK_DEVFACTORY_DAILY,
+    TASK_DEVFACTORY_COMMERCIAL,
+]
+
+BASE_MODULES = [
+    "src.worker.register_tasks",          # schedule anchors + legacy imports
+    "src.worker.tasks_ops",               # ops tasks
+    "src.worker.tasks.devfactory_commercial",  # commercial runner
+    # NOTE: we do NOT rely on shared_task modules here for Gate tasks anymore
+]
 
 
 def _split_modules(s: str) -> list[str]:
@@ -355,30 +377,10 @@ def _dedupe(seq: list[str]) -> list[str]:
     return out
 
 
-CRITICAL_TASK_MODULES = [
-    "src.worker.tasks_planner_kpi",
-    "src.worker.tasks_devfactory_analytics",
-]
-
-CRITICAL_TASK_NAMES = [
-    "planner.kpi.snapshot",
-    "planner.kpi.daily_refresh",
-    "analytics.devfactory.daily",
-    "devfactory.commercial.run_order",
-]
-
-BASE_MODULES = [
-    "src.worker.register_tasks",
-    "src.worker.tasks_ops",
-    "src.worker.tasks.devfactory_commercial",
-    *CRITICAL_TASK_MODULES,
-]
-
 ENV_IMPORTS = _split_modules(os.getenv("CELERY_IMPORTS", ""))
 ENV_INCLUDE = _split_modules(os.getenv("CELERY_INCLUDE", ""))
 
 MODULES = _dedupe(BASE_MODULES + ENV_IMPORTS + ENV_INCLUDE)
-
 try:
     app.conf.imports = MODULES
     app.conf.include = MODULES
@@ -387,13 +389,6 @@ except Exception:
         log.exception("celery: failed to apply app.conf.imports/include")
     except Exception:
         pass
-
-# Force import defaults for worker/beat (or via env knob).
-FF_CELERY_FORCE_IMPORT_DEFAULTS = _env_bool(
-    "FF_CELERY_FORCE_IMPORT_DEFAULTS",
-    _is_celery_worker_or_beat(),
-)
-FF_CELERY_STRICT_TASKS = _env_bool("FF_CELERY_STRICT_TASKS", False)
 
 
 def _safe_import(mod: str) -> None:
@@ -413,71 +408,203 @@ def _has_task(name: str) -> bool:
         return False
 
 
-def _force_import_and_finalize() -> None:
-    """
-    Make sure shared_task bindings are materialized into THIS app registry.
-    In practice: import_default_modules + finalize.
-    """
-    if not FF_CELERY_FORCE_IMPORT_DEFAULTS:
-        return
+# ---------------------------------------------------------------------
+# DB helper (avoid importing from celery_app in task modules; keep local)
+# ---------------------------------------------------------------------
+
+
+def _connect_pg():
+    # late import -> prevents accidental cycles
+    from src.worker.pg_connect import _connect_pg as _cp
+
+    return _cp()
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _task_id(self) -> Optional[str]:
     try:
-        app.loader.import_default_modules()
+        return getattr(getattr(self, "request", None), "id", None)
     except Exception:
-        try:
-            log.exception("celery: import_default_modules failed")
-        except Exception:
-            pass
-    try:
-        # important for shared_task proxies -> real tasks in registry
-        app.finalize(auto=True)
-    except Exception:
-        try:
-            log.exception("celery: app.finalize(auto=True) failed")
-        except Exception:
-            pass
+        return None
 
 
-def _ensure_critical_tasks_registered(stage: str) -> None:
-    # deterministic imports
-    for m in BASE_MODULES:
-        _safe_import(m)
+def _set_local_timeouts(cur, stmt_ms_env: str, lock_ms_env: str) -> None:
+    stmt_timeout_ms = _env_int(stmt_ms_env, 0)
+    lock_timeout_ms = _env_int(lock_ms_env, 0)
+    if stmt_timeout_ms and stmt_timeout_ms > 0:
+        cur.execute("SET LOCAL statement_timeout = %s;", (int(stmt_timeout_ms),))
+    if lock_timeout_ms and lock_timeout_ms > 0:
+        cur.execute("SET LOCAL lock_timeout = %s;", (int(lock_timeout_ms),))
 
-    _force_import_and_finalize()
-
-    missing = [t for t in CRITICAL_TASK_NAMES if not _has_task(t)]
-    if missing:
-        try:
-            log.error("celery: live registry missing critical tasks (%s): %s", stage, ", ".join(missing))
-        except Exception:
-            pass
-        if FF_CELERY_STRICT_TASKS and FF_CELERY_FORCE_IMPORT_DEFAULTS:
-            raise RuntimeError(f"celery critical tasks missing ({stage}): {', '.join(missing)}")
-
-
-# Run once on import (safe for API; worker also imports this module).
-try:
-    _ensure_critical_tasks_registered(stage="import")
-except Exception:
-    # must not kill API import
-    if FF_CELERY_STRICT_TASKS and FF_CELERY_FORCE_IMPORT_DEFAULTS:
-        raise
-
-# Run again after finalize (worker path).
-try:
-
-    @app.on_after_finalize.connect  # type: ignore[attr-defined]
-    def _after_finalize(sender=None, **kwargs) -> None:
-        try:
-            _ensure_critical_tasks_registered(stage="after_finalize")
-        except Exception:
-            if FF_CELERY_STRICT_TASKS and FF_CELERY_FORCE_IMPORT_DEFAULTS:
-                raise
-
-except Exception:
-    pass
 
 # ---------------------------------------------------------------------
-# Beat schedule (minimal bootstrap; main schedule anchored by register_tasks)
+# Gate tasks: register directly on THIS app (no shared_task ambiguity)
+# ---------------------------------------------------------------------
+
+
+def _register_gate_tasks() -> None:
+    """
+    Define Gate-critical tasks directly in this module using app.task.
+    This guarantees they exist in the *live worker registry* (`inspect registered`).
+    """
+    # planner.kpi.snapshot
+    if not _has_task(TASK_PLANNER_KPI_SNAPSHOT):
+
+        @app.task(name=TASK_PLANNER_KPI_SNAPSHOT, bind=True, acks_late=True, ignore_result=False)
+        def _planner_kpi_snapshot(self) -> Dict[str, Any]:
+            ts0 = _utc_now_iso()
+            t0 = time.perf_counter()
+            tid = _task_id(self)
+
+            conn = _connect_pg()
+            try:
+                with conn.cursor() as cur:
+                    _set_local_timeouts(cur, "FF_PLANNER_KPI_STMT_TIMEOUT_MS", "FF_PLANNER_KPI_LOCK_TIMEOUT_MS")
+                    cur.execute("SELECT planner.kpi_snapshot();")
+                conn.commit()
+                latency_ms = int((time.perf_counter() - t0) * 1000)
+                return {"ok": True, "ts": ts0, "task_id": tid, "latency_ms": latency_ms}
+            except Exception as e:  # noqa: BLE001
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                latency_ms = int((time.perf_counter() - t0) * 1000)
+                log.exception("%s failed: %s", TASK_PLANNER_KPI_SNAPSHOT, e)
+                return {"ok": False, "ts": ts0, "task_id": tid, "error": str(e), "latency_ms": latency_ms}
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    # planner.kpi.daily_refresh
+    if not _has_task(TASK_PLANNER_KPI_DAILY):
+
+        @app.task(name=TASK_PLANNER_KPI_DAILY, bind=True, acks_late=True, ignore_result=False)
+        def _planner_kpi_daily_refresh(self) -> Dict[str, Any]:
+            ts0 = _utc_now_iso()
+            t0 = time.perf_counter()
+            tid = _task_id(self)
+
+            conn = _connect_pg()
+            try:
+                with conn.cursor() as cur:
+                    _set_local_timeouts(cur, "FF_PLANNER_KPI_STMT_TIMEOUT_MS", "FF_PLANNER_KPI_LOCK_TIMEOUT_MS")
+                    cur.execute("REFRESH MATERIALIZED VIEW planner.planner_kpi_daily;")
+                conn.commit()
+                latency_ms = int((time.perf_counter() - t0) * 1000)
+                return {"ok": True, "ts": ts0, "task_id": tid, "latency_ms": latency_ms}
+            except Exception as e:  # noqa: BLE001
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                latency_ms = int((time.perf_counter() - t0) * 1000)
+                log.exception("%s failed: %s", TASK_PLANNER_KPI_DAILY, e)
+                return {"ok": False, "ts": ts0, "task_id": tid, "error": str(e), "latency_ms": latency_ms}
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    # analytics.devfactory.daily
+    if not _has_task(TASK_DEVFACTORY_DAILY):
+
+        def _parse_dt(dt: Optional[str]) -> Tuple[date, Optional[str], Optional[str]]:
+            if not dt:
+                return (date.today(), None, None)
+            s = str(dt).strip()
+            if not s:
+                return (date.today(), dt, "empty_string")
+            try:
+                return (date.fromisoformat(s), s, None)
+            except ValueError:
+                pass
+            try:
+                return (datetime.fromisoformat(s).date(), s, "datetime_input_truncated_to_date")
+            except ValueError:
+                pass
+            if len(s) >= 10:
+                try:
+                    return (date.fromisoformat(s[:10]), s, "non_iso_input_used_first_10_chars")
+                except ValueError:
+                    pass
+            return (date.today(), s, "invalid_dt_fallback_to_today")
+
+        @app.task(name=TASK_DEVFACTORY_DAILY, bind=True, acks_late=True, ignore_result=False)
+        def _analytics_devfactory_daily(self, dt: str | None = None) -> Dict[str, Any]:
+            ts0 = _utc_now_iso()
+            t0 = time.perf_counter()
+            tid = _task_id(self)
+            target_date, dt_input, dt_reason = _parse_dt(dt)
+
+            conn = _connect_pg()
+            try:
+                tasks_total: int | None = None
+                tasks_with_changes: int | None = None
+
+                with conn.cursor() as cur:
+                    _set_local_timeouts(cur, "FF_DEVFACTORY_KPI_STMT_TIMEOUT_MS", "FF_DEVFACTORY_KPI_LOCK_TIMEOUT_MS")
+                    cur.execute("SELECT dev.refresh_devfactory_kpi_daily(%s);", (target_date,))
+                    cur.execute(
+                        """
+                        SELECT tasks_total, tasks_with_changes
+                        FROM dev.devfactory_kpi_daily
+                        WHERE dt = %s;
+                        """,
+                        (target_date,),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        if row[0] is not None:
+                            tasks_total = int(row[0])
+                        if row[1] is not None:
+                            tasks_with_changes = int(row[1])
+
+                conn.commit()
+                latency_ms = int((time.perf_counter() - t0) * 1000)
+                return {
+                    "ok": True,
+                    "ts": ts0,
+                    "task_id": tid,
+                    "dt": str(target_date),
+                    "dt_input": dt_input,
+                    "dt_fallback_reason": dt_reason,
+                    "tasks_total": tasks_total,
+                    "tasks_with_changes": tasks_with_changes,
+                    "latency_ms": latency_ms,
+                }
+            except Exception as e:  # noqa: BLE001
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                latency_ms = int((time.perf_counter() - t0) * 1000)
+                log.exception("%s failed: %s", TASK_DEVFACTORY_DAILY, e)
+                return {
+                    "ok": False,
+                    "ts": ts0,
+                    "task_id": tid,
+                    "dt": str(target_date),
+                    "dt_input": dt_input,
+                    "dt_fallback_reason": dt_reason,
+                    "error": str(e),
+                    "latency_ms": latency_ms,
+                }
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+
+# ---------------------------------------------------------------------
+# Minimal beat schedule (kept lightweight; main schedule anchored by register_tasks)
 # ---------------------------------------------------------------------
 
 
@@ -523,9 +650,9 @@ def _register_default_schedules() -> None:
     if ENABLE_BEAT_HEARTBEAT and _schedule_enabled("beat_heartbeat", True):
         _add_schedule("ops.beat.heartbeat", _schedule_crontab(SCHEDULE_KEY_BEAT_HEARTBEAT))
     if _schedule_enabled("kpi_snapshot", True):
-        _add_schedule("planner.kpi.snapshot", _schedule_crontab(SCHEDULE_KEY_KPI_SNAPSHOT))
+        _add_schedule(TASK_PLANNER_KPI_SNAPSHOT, _schedule_crontab(SCHEDULE_KEY_KPI_SNAPSHOT))
     if _schedule_enabled("kpi_daily", True):
-        _add_schedule("planner.kpi.daily_refresh", _schedule_crontab(SCHEDULE_KEY_KPI_DAILY))
+        _add_schedule(TASK_PLANNER_KPI_DAILY, _schedule_crontab(SCHEDULE_KEY_KPI_DAILY))
 
 
 try:
@@ -533,8 +660,9 @@ try:
 except Exception:
     pass
 
+
 # ---------------------------------------------------------------------
-# Diagnostics
+# Final: import anchors + enforce registry
 # ---------------------------------------------------------------------
 
 
@@ -562,7 +690,6 @@ def celery_env_summary() -> Dict[str, Any]:
         "enable_utc": CELERY_ENABLE_UTC,
         "default_queue": CELERY_DEFAULT_QUEUE,
         "imports_count": len(MODULES),
-        "force_import_defaults": FF_CELERY_FORCE_IMPORT_DEFAULTS,
         "strict_tasks": FF_CELERY_STRICT_TASKS,
         "tasks_registered": {k: _has_task(k) for k in CRITICAL_TASK_NAMES},
     }
@@ -575,10 +702,50 @@ def print_celery_env_summary() -> None:
         pass
 
 
+def _enforce_gate_registry(stage: str) -> None:
+    # import anchors (non-fatal)
+    for m in BASE_MODULES:
+        _safe_import(m)
+
+    # register Gate tasks directly on app
+    try:
+        _register_gate_tasks()
+    except Exception:
+        log.exception("celery: failed to register gate tasks")
+
+    missing = [t for t in CRITICAL_TASK_NAMES if not _has_task(t)]
+    if missing:
+        log.error("celery: live registry missing critical tasks (%s): %s", stage, ", ".join(missing))
+        if FF_CELERY_STRICT_TASKS:
+            # Fail-fast ONLY in worker/beat (default), not in API import.
+            raise RuntimeError(f"celery critical tasks missing ({stage}): {', '.join(missing)}")
+
+
+# Run once at import (worker imports this on startup; API import stays safe)
+try:
+    _enforce_gate_registry(stage="import")
+except Exception:
+    if FF_CELERY_STRICT_TASKS:
+        raise
+
+# Re-check after finalize (some environments finalize later)
+try:
+
+    @app.on_after_finalize.connect  # type: ignore[attr-defined]
+    def _after_finalize(sender=None, **kwargs) -> None:
+        try:
+            _enforce_gate_registry(stage="after_finalize")
+        except Exception:
+            if FF_CELERY_STRICT_TASKS:
+                raise
+
+except Exception:
+    pass
+
 # Optional: force bind confirm
 try:
     from src.worker.ff_force_bind_confirm import *  # noqa: F401,F403
 except Exception:
     pass
 
-__all__ = ["app", "celery_env_summary", "print_celery_env_summary"]
+__all__ = ["app", "celery_env_summary", "print_celery_env_summary", "_connect_pg"]
