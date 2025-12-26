@@ -2,24 +2,15 @@
 """
 FoxProFlow Celery app bootstrap.
 
-Goals:
-- One import-safe module for celery app/beat/worker.
-- Stable env parsing across Windows host + Docker Desktop.
-- Hardened defaults, explicit broker/backend DSNs.
-- Safe "force bind" (avoid 127.0.0.1/localhost inside containers).
-- Deterministic task imports for Gate (worker inspect registered).
-
-NOTE:
-- This file must be import-safe: API routers may import Celery app for health/ops endpoints.
-- Any exception at import-time can cascade into missing routers (e.g., /api/autoplan/* -> 404).
-
 CRITICAL (Gate):
-- Worker must register (live worker registry / inspect registered):
-    - planner.kpi.snapshot
-    - planner.kpi.daily_refresh
-    - analytics.devfactory.daily
-    - devfactory.commercial.run_order
+Worker must register (live worker registry / inspect registered):
+  - planner.kpi.snapshot
+  - planner.kpi.daily_refresh
+  - analytics.devfactory.daily
+  - devfactory.commercial.run_order
 Otherwise messages will be discarded as "Received unregistered task ...".
+
+This module must remain import-safe for API (do not crash on import).
 """
 
 from __future__ import annotations
@@ -79,15 +70,21 @@ def _safe_json_loads(v: Optional[str]) -> Optional[Dict[str, Any]]:
 
 def _is_celery_worker_or_beat() -> bool:
     """
-    True only for real `celery ... worker|beat ...` process.
-    Avoid heavy bootstrap for API import and most celery CLI commands (inspect/report).
+    Best-effort: True only for real celery worker/beat runtime,
+    False for API imports and most celery CLI commands.
     """
     try:
         argv = [str(a).lower() for a in sys.argv]
         joined = " ".join(argv)
-        if "celery" not in joined:
-            return False
-        return ("worker" in argv) or ("beat" in argv) or (" worker " in joined) or (" beat " in joined)
+        # common patterns:
+        #   celery -A ... worker
+        #   celery -A ... beat
+        #   python -m celery -A ... worker
+        if "worker" in argv or "beat" in argv:
+            return True
+        if " worker " in joined or " beat " in joined:
+            return True
+        return False
     except Exception:
         return False
 
@@ -237,7 +234,10 @@ CELERY_ENABLE_UTC = _env_bool("CELERY_ENABLE_UTC", True)
 CELERY_TASK_ACKS_LATE = _env_bool("CELERY_TASK_ACKS_LATE", True)
 CELERY_TASK_REJECT_ON_WORKER_LOST = _env_bool("CELERY_TASK_REJECT_ON_WORKER_LOST", True)
 CELERY_WORKER_PREFETCH_MULTIPLIER = _env_int("CELERY_WORKER_PREFETCH_MULTIPLIER", 1)
-CELERY_WORKER_MAX_TASKS_PER_CHILD = _env_int("CELERY_MAX_TASKS_PER_CHILD", _env_int("CELERY_WORKER_MAX_TASKS_PER_CHILD", 500))
+CELERY_WORKER_MAX_TASKS_PER_CHILD = _env_int(
+    "CELERY_MAX_TASKS_PER_CHILD",
+    _env_int("CELERY_WORKER_MAX_TASKS_PER_CHILD", 500),
+)
 CELERY_WORKER_MAX_MEMORY_PER_CHILD = _env_int("CELERY_WORKER_MAX_MEMORY_PER_CHILD", 0)
 CELERY_WORKER_CONCURRENCY = _env_int("CELERY_WORKER_CONCURRENCY", 0)
 CELERY_HIJACK_ROOT_LOGGER = _env_bool("CELERY_HIJACK_ROOT_LOGGER", False)
@@ -273,7 +273,7 @@ ENABLE_BEAT_HEARTBEAT = _env_bool("ENABLE_BEAT_HEARTBEAT", False)
 
 app = Celery("foxproflow", broker=CELERY_BROKER_URL, backend=CELERY_RESULT_BACKEND)
 
-# IMPORTANT: make this app current/default so shared_task binds correctly in this process.
+# IMPORTANT: bind shared_task to THIS app in this process.
 try:
     app.set_current()
     app.set_default()
@@ -331,7 +331,7 @@ if isinstance(BACKEND_TRANSPORT_OPTIONS, dict):
 app.conf.update(**_conf)
 
 # ---------------------------------------------------------------------
-# Module lists for deterministic imports
+# Deterministic module imports for Gate
 # ---------------------------------------------------------------------
 
 
@@ -356,8 +356,8 @@ def _dedupe(seq: list[str]) -> list[str]:
 
 
 CRITICAL_TASK_MODULES = [
-    "src.worker.tasks_planner_kpi",          # planner.kpi.snapshot / planner.kpi.daily_refresh
-    "src.worker.tasks_devfactory_analytics", # analytics.devfactory.daily
+    "src.worker.tasks_planner_kpi",
+    "src.worker.tasks_devfactory_analytics",
 ]
 
 CRITICAL_TASK_NAMES = [
@@ -379,7 +379,6 @@ ENV_INCLUDE = _split_modules(os.getenv("CELERY_INCLUDE", ""))
 
 MODULES = _dedupe(BASE_MODULES + ENV_IMPORTS + ENV_INCLUDE)
 
-# publish for Celery loader
 try:
     app.conf.imports = MODULES
     app.conf.include = MODULES
@@ -389,10 +388,38 @@ except Exception:
     except Exception:
         pass
 
-# Force-import configured modules in worker/beat runtime (this is the core Gate fix).
-# Relying on Celery internals is sometimes not enough in this project due to layered bootstraps.
-FF_CELERY_FORCE_IMPORT_DEFAULTS = _env_bool("FF_CELERY_FORCE_IMPORT_DEFAULTS", _is_celery_worker_or_beat())
-if FF_CELERY_FORCE_IMPORT_DEFAULTS:
+# Force import defaults for worker/beat (or via env knob).
+FF_CELERY_FORCE_IMPORT_DEFAULTS = _env_bool(
+    "FF_CELERY_FORCE_IMPORT_DEFAULTS",
+    _is_celery_worker_or_beat(),
+)
+FF_CELERY_STRICT_TASKS = _env_bool("FF_CELERY_STRICT_TASKS", False)
+
+
+def _safe_import(mod: str) -> None:
+    try:
+        importlib.import_module(mod)
+    except Exception:
+        try:
+            log.exception("celery: failed to import module: %s", mod)
+        except Exception:
+            pass
+
+
+def _has_task(name: str) -> bool:
+    try:
+        return str(name) in getattr(app, "tasks", {})
+    except Exception:
+        return False
+
+
+def _force_import_and_finalize() -> None:
+    """
+    Make sure shared_task bindings are materialized into THIS app registry.
+    In practice: import_default_modules + finalize.
+    """
+    if not FF_CELERY_FORCE_IMPORT_DEFAULTS:
+        return
     try:
         app.loader.import_default_modules()
     except Exception:
@@ -400,23 +427,57 @@ if FF_CELERY_FORCE_IMPORT_DEFAULTS:
             log.exception("celery: import_default_modules failed")
         except Exception:
             pass
-
-# ---------------------------------------------------------------------
-# Optional autodiscover (off by default; keep as knob)
-# ---------------------------------------------------------------------
-
-FF_CELERY_AUTODISCOVER = _env_bool("FF_CELERY_AUTODISCOVER", False)
-if FF_CELERY_AUTODISCOVER:
     try:
-        app.autodiscover_tasks(["src.worker"], force=True)
+        # important for shared_task proxies -> real tasks in registry
+        app.finalize(auto=True)
     except Exception:
         try:
-            log.exception("celery: autodiscover failed")
+            log.exception("celery: app.finalize(auto=True) failed")
         except Exception:
             pass
 
+
+def _ensure_critical_tasks_registered(stage: str) -> None:
+    # deterministic imports
+    for m in BASE_MODULES:
+        _safe_import(m)
+
+    _force_import_and_finalize()
+
+    missing = [t for t in CRITICAL_TASK_NAMES if not _has_task(t)]
+    if missing:
+        try:
+            log.error("celery: live registry missing critical tasks (%s): %s", stage, ", ".join(missing))
+        except Exception:
+            pass
+        if FF_CELERY_STRICT_TASKS and FF_CELERY_FORCE_IMPORT_DEFAULTS:
+            raise RuntimeError(f"celery critical tasks missing ({stage}): {', '.join(missing)}")
+
+
+# Run once on import (safe for API; worker also imports this module).
+try:
+    _ensure_critical_tasks_registered(stage="import")
+except Exception:
+    # must not kill API import
+    if FF_CELERY_STRICT_TASKS and FF_CELERY_FORCE_IMPORT_DEFAULTS:
+        raise
+
+# Run again after finalize (worker path).
+try:
+
+    @app.on_after_finalize.connect  # type: ignore[attr-defined]
+    def _after_finalize(sender=None, **kwargs) -> None:
+        try:
+            _ensure_critical_tasks_registered(stage="after_finalize")
+        except Exception:
+            if FF_CELERY_STRICT_TASKS and FF_CELERY_FORCE_IMPORT_DEFAULTS:
+                raise
+
+except Exception:
+    pass
+
 # ---------------------------------------------------------------------
-# Beat schedule (minimal bootstrap schedules)
+# Beat schedule (minimal bootstrap; main schedule anchored by register_tasks)
 # ---------------------------------------------------------------------
 
 
@@ -473,7 +534,7 @@ except Exception:
     pass
 
 # ---------------------------------------------------------------------
-# Diagnostics helpers
+# Diagnostics
 # ---------------------------------------------------------------------
 
 
@@ -492,13 +553,6 @@ def _mask_url(url: str) -> str:
     return url
 
 
-def _has_task(name: str) -> bool:
-    try:
-        return str(name) in getattr(app, "tasks", {})
-    except Exception:
-        return False
-
-
 def celery_env_summary() -> Dict[str, Any]:
     return {
         "in_docker": _in_docker(),
@@ -509,6 +563,7 @@ def celery_env_summary() -> Dict[str, Any]:
         "default_queue": CELERY_DEFAULT_QUEUE,
         "imports_count": len(MODULES),
         "force_import_defaults": FF_CELERY_FORCE_IMPORT_DEFAULTS,
+        "strict_tasks": FF_CELERY_STRICT_TASKS,
         "tasks_registered": {k: _has_task(k) for k in CRITICAL_TASK_NAMES},
     }
 
@@ -520,55 +575,7 @@ def print_celery_env_summary() -> None:
         pass
 
 
-# ---------------------------------------------------------------------
-# Critical import anchors + registry check (log-only, must not crash)
-# ---------------------------------------------------------------------
-
-
-def _safe_import(mod: str) -> None:
-    try:
-        importlib.import_module(mod)
-    except Exception:
-        try:
-            log.exception("celery: failed to import module: %s", mod)
-        except Exception:
-            pass
-
-
-def _ensure_critical_tasks_registered() -> None:
-    # deterministic imports (do NOT rely only on loader)
-    for m in [
-        "src.worker.register_tasks",
-        "src.worker.tasks_ops",
-        "src.worker.tasks.devfactory_commercial",
-        *CRITICAL_TASK_MODULES,
-    ]:
-        _safe_import(m)
-
-    # second chance: loader import (worker/beat)
-    if FF_CELERY_FORCE_IMPORT_DEFAULTS:
-        try:
-            app.loader.import_default_modules()
-        except Exception:
-            try:
-                log.exception("celery: import_default_modules failed (second-chance)")
-            except Exception:
-                pass
-
-    missing = [t for t in CRITICAL_TASK_NAMES if not _has_task(t)]
-    if missing:
-        try:
-            log.error("celery: live registry missing critical tasks: %s", ", ".join(missing))
-        except Exception:
-            pass
-
-
-try:
-    _ensure_critical_tasks_registered()
-except Exception:
-    pass
-
-# Optional: force bind confirm (used by entrypoints / task name normalization)
+# Optional: force bind confirm
 try:
     from src.worker.ff_force_bind_confirm import *  # noqa: F401,F403
 except Exception:
