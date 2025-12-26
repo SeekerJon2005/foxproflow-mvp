@@ -11,23 +11,30 @@ Goals:
 
 NOTE:
 - This file must be import-safe: API routers may import Celery app for health/ops endpoints.
-- Any exception at import-time can cascade into missing routers (e.g., /api/autoplan/* -> 404).
+- Any exception at import-time can cascade into missing routers.
 
 DEV-M0 NOTE (critical):
-- Worker must register task 'devfactory.commercial.run_order' at startup.
-  Otherwise worker will DISCARD messages as "Received unregistered task..."
-  Fix: anchor import of src.worker.tasks.devfactory_commercial (safe import).
+- Worker must register task names like:
+    - devfactory.commercial.run_order
+    - planner.kpi.snapshot
+    - planner.kpi.daily_refresh
+    - analytics.devfactory.daily
+  Otherwise worker will DISCARD messages as "Received unregistered task...".
 """
 
 from __future__ import annotations
 
+import importlib
 import json
+import logging
 import os
 import re
 from typing import Any, Dict, Optional
 
 from celery import Celery
 from celery.schedules import crontab
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------
 # Env helpers
@@ -258,16 +265,13 @@ CELERY_BROKER_URL = os.getenv(
 )
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", DEFAULT_REDIS_BACKEND_URL)
 
-# Serializers / content
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 
-# Timezone: prefer explicit CELERY_TIMEZONE; else use TZ; else UTC
 CELERY_TIMEZONE = os.getenv("CELERY_TIMEZONE", os.getenv("TZ", "UTC"))
 CELERY_ENABLE_UTC = _env_bool("CELERY_ENABLE_UTC", True)
 
-# Worker behavior
 CELERY_TASK_ACKS_LATE = _env_bool("CELERY_TASK_ACKS_LATE", True)
 CELERY_TASK_REJECT_ON_WORKER_LOST = _env_bool("CELERY_TASK_REJECT_ON_WORKER_LOST", True)
 CELERY_WORKER_PREFETCH_MULTIPLIER = _env_int("CELERY_WORKER_PREFETCH_MULTIPLIER", 1)
@@ -279,35 +283,28 @@ CELERY_WORKER_MAX_MEMORY_PER_CHILD = _env_int("CELERY_WORKER_MAX_MEMORY_PER_CHIL
 CELERY_WORKER_CONCURRENCY = _env_int("CELERY_WORKER_CONCURRENCY", 0)  # 0 => celery default
 CELERY_HIJACK_ROOT_LOGGER = _env_bool("CELERY_HIJACK_ROOT_LOGGER", False)
 
-# Time limits
 CELERY_TASK_TIME_LIMIT_SEC = _env_int("CELERY_TASK_TIME_LIMIT_SEC", 0)
 CELERY_TASK_SOFT_TIME_LIMIT_SEC = _env_int("CELERY_TASK_SOFT_TIME_LIMIT_SEC", 0)
 
-# Result backend expiration
 CELERY_RESULT_EXPIRES_SEC = _env_int("CELERY_RESULT_EXPIRES_SEC", 86400)
 
-# Broker tuning
 CELERY_BROKER_HEARTBEAT = _env_int("CELERY_BROKER_HEARTBEAT", 0)
 CELERY_BROKER_POOL_LIMIT = _env_int("CELERY_BROKER_POOL_LIMIT", 0)
 
 BROKER_TRANSPORT_OPTIONS = _safe_json_loads(os.getenv("CELERY_BROKER_TRANSPORT_OPTIONS"))
 BACKEND_TRANSPORT_OPTIONS = _safe_json_loads(os.getenv("CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS"))
 
-# Eager mode (tests/debug)
 CELERY_TASK_ALWAYS_EAGER = _env_bool("CELERY_TASK_ALWAYS_EAGER", False)
 CELERY_TASK_EAGER_PROPAGATES = _env_bool("CELERY_TASK_EAGER_PROPAGATES", True)
 
-# Queues / routing defaults
 CELERY_DEFAULT_QUEUE = os.getenv("CELERY_DEFAULT_QUEUE", "celery")
 CELERY_TASK_DEFAULT_QUEUE = CELERY_DEFAULT_QUEUE
 CELERY_TASK_DEFAULT_EXCHANGE = os.getenv("CELERY_DEFAULT_EXCHANGE", "default")
 CELERY_TASK_DEFAULT_ROUTING_KEY = os.getenv("CELERY_DEFAULT_ROUTING_KEY", "default")
 
-# Observability / events
 CELERY_WORKER_SEND_TASK_EVENTS = _env_bool("CELERY_WORKER_SEND_TASK_EVENTS", True)
 CELERY_TASK_SEND_SENT_EVENT = _env_bool("CELERY_TASK_SEND_SENT_EVENT", True)
 
-# Beat
 ENABLE_BEAT = _env_bool("ENABLE_BEAT", True)
 ENABLE_BEAT_HEARTBEAT = _env_bool("ENABLE_BEAT_HEARTBEAT", False)
 
@@ -317,7 +314,6 @@ ENABLE_BEAT_HEARTBEAT = _env_bool("ENABLE_BEAT_HEARTBEAT", False)
 
 app = Celery("foxproflow", broker=CELERY_BROKER_URL, backend=CELERY_RESULT_BACKEND)
 
-# Apply config
 _conf: Dict[str, Any] = dict(
     broker_url=CELERY_BROKER_URL,
     result_backend=CELERY_RESULT_BACKEND,
@@ -364,7 +360,6 @@ if isinstance(BROKER_TRANSPORT_OPTIONS, dict):
     _conf["broker_transport_options"] = BROKER_TRANSPORT_OPTIONS
 
 if isinstance(BACKEND_TRANSPORT_OPTIONS, dict):
-    # celery expects `result_backend_transport_options`
     _conf["result_backend_transport_options"] = BACKEND_TRANSPORT_OPTIONS
 
 app.conf.update(**_conf)
@@ -394,13 +389,17 @@ def _dedupe(seq: list[str]) -> list[str]:
     return out
 
 
+# CRITICAL: these must be imported for live worker registry
+CRITICAL_TASK_MODULES = [
+    "src.worker.tasks_planner_kpi",          # planner.kpi.snapshot / planner.kpi.daily_refresh
+    "src.worker.tasks_devfactory_analytics", # analytics.devfactory.daily
+]
+
 BASE_MODULES = [
-    # register_tasks anchors beat schedule and imports task modules at app configure time
     "src.worker.register_tasks",
-    # ops tasks MUST be importable, otherwise worker will drop ops.* messages
     "src.worker.tasks_ops",
-    # DEV-M0: commercial loop tasks MUST be importable, otherwise worker discards devfactory.commercial.run_order
     "src.worker.tasks.devfactory_commercial",
+    *CRITICAL_TASK_MODULES,
 ]
 
 ENV_IMPORTS = _split_modules(os.getenv("CELERY_IMPORTS", ""))
@@ -411,20 +410,27 @@ try:
     app.conf.imports = MODULES
     app.conf.include = MODULES
 except Exception:
-    pass
+    # must not kill API imports
+    try:
+        log.exception("celery: failed to apply app.conf.imports/include")
+    except Exception:
+        pass
 
 # ---------------------------------------------------------------------
-# Optional autodiscover (off by default in FoxProFlow; use explicit modules)
+# Optional autodiscover
 # ---------------------------------------------------------------------
 
 FF_CELERY_AUTODISCOVER = _env_bool("FF_CELERY_AUTODISCOVER", False)
 if FF_CELERY_AUTODISCOVER:
-    # If you have a dedicated package that follows Celery autodiscover conventions.
     AUTODISCOVER_PACKAGES = ["src.worker"]
     try:
         app.autodiscover_tasks(AUTODISCOVER_PACKAGES, force=True)
     except Exception:
-        pass
+        # must not kill API imports
+        try:
+            log.exception("celery: autodiscover failed")
+        except Exception:
+            pass
 
 # ---------------------------------------------------------------------
 # Beat schedule (minimal bootstrap schedules)
@@ -454,7 +460,6 @@ def _add_schedule(task_name: str, schedule_obj: Any, args: Optional[tuple] = Non
         "schedule": schedule_obj,
         "args": args or (),
         "kwargs": kwargs or {},
-        # keep routing deterministic
         "options": {"queue": CELERY_DEFAULT_QUEUE},
     }
 
@@ -463,23 +468,19 @@ SCHEDULE_KEY_QUEUE_WATCHDOG = os.getenv("SCHEDULE_QUEUE_WATCHDOG", "*/5 * * * *"
 SCHEDULE_KEY_OPS_ALERTS = os.getenv("SCHEDULE_OPS_ALERTS", "*/5 * * * *")
 SCHEDULE_KEY_BEAT_HEARTBEAT = os.getenv("SCHEDULE_BEAT_HEARTBEAT", "*/1 * * * *")
 
-# KPI
-SCHEDULE_KEY_KPI_SNAPSHOT = os.getenv("SCHEDULE_KPI_SNAPSHOT", "0 * * * *")  # hourly at :00
-SCHEDULE_KEY_KPI_DAILY = os.getenv("SCHEDULE_KPI_DAILY", "5 0 * * *")  # 00:05
+SCHEDULE_KEY_KPI_SNAPSHOT = os.getenv("SCHEDULE_KPI_SNAPSHOT", "0 * * * *")
+SCHEDULE_KEY_KPI_DAILY = os.getenv("SCHEDULE_KPI_DAILY", "5 0 * * *")
 
 
 def _register_default_schedules() -> None:
-    # Ops watchers (enabled by default)
     if _schedule_enabled("queue_watchdog", True):
         _add_schedule("ops.queue.watchdog", _schedule_crontab(SCHEDULE_KEY_QUEUE_WATCHDOG))
     if _schedule_enabled("ops_alerts", True):
         _add_schedule("ops.alerts.sla", _schedule_crontab(SCHEDULE_KEY_OPS_ALERTS))
 
-    # Beat heartbeat (only if explicitly enabled)
     if ENABLE_BEAT_HEARTBEAT and _schedule_enabled("beat_heartbeat", True):
         _add_schedule("ops.beat.heartbeat", _schedule_crontab(SCHEDULE_KEY_BEAT_HEARTBEAT))
 
-    # KPI
     if _schedule_enabled("kpi_snapshot", True):
         _add_schedule("planner.kpi.snapshot", _schedule_crontab(SCHEDULE_KEY_KPI_SNAPSHOT))
     if _schedule_enabled("kpi_daily", True):
@@ -489,7 +490,11 @@ def _register_default_schedules() -> None:
 try:
     _register_default_schedules()
 except Exception:
-    pass
+    # must not kill API imports
+    try:
+        log.exception("celery: failed to register default schedules")
+    except Exception:
+        pass
 
 # ---------------------------------------------------------------------
 # Diagnostics helpers
@@ -500,15 +505,12 @@ def _mask_url(url: str) -> str:
     if not url:
         return url
     try:
-        # mask redis password
         if url.startswith("redis://") and "@" in url:
-            # redis://:pass@host:port/db
-            pre, rest = url.split("redis://", 1)
+            _pre, rest = url.split("redis://", 1)
             if "@" in rest and ":" in rest.split("@", 1)[0]:
                 creds, host = rest.split("@", 1)
                 user = creds.split(":", 1)[0]
                 return f"redis://{user}:{'***'}@{host}"
-        # mask postgres password
         if url.startswith("postgresql://") and "@" in url:
             scheme, rest = url.split("://", 1)
             if "@" in rest and ":" in rest.split("@", 1)[0]:
@@ -543,9 +545,11 @@ def celery_env_summary() -> Dict[str, Any]:
         "enable_beat_heartbeat": ENABLE_BEAT_HEARTBEAT,
         "default_queue": CELERY_DEFAULT_QUEUE,
         "imports_count": len(MODULES),
-        # DEV-M0: quick sanity
         "tasks_registered": {
             "devfactory.commercial.run_order": _has_task("devfactory.commercial.run_order"),
+            "planner.kpi.snapshot": _has_task("planner.kpi.snapshot"),
+            "planner.kpi.daily_refresh": _has_task("planner.kpi.daily_refresh"),
+            "analytics.devfactory.daily": _has_task("analytics.devfactory.daily"),
             "ops.queue.watchdog": _has_task("ops.queue.watchdog"),
             "ops.alerts.sla": _has_task("ops.alerts.sla"),
         },
@@ -560,32 +564,35 @@ def print_celery_env_summary() -> None:
 
 
 # ---------------------------------------------------------------------
-# Make sure critical modules are imported (import-safe)
+# Import anchors (must be import-safe)
+# These imports guarantee that the live worker registry contains critical tasks.
 # ---------------------------------------------------------------------
 
-# 1) register_tasks: anchors beat schedule and imports task modules (incl. ops) at app configure time
-try:
-    import src.worker.register_tasks  # noqa: F401
-except Exception:
-    pass
 
-# 2) tasks_ops: MUST be importable so ops.* tasks are registered (prevents "unregistered task" spam)
-try:
-    import src.worker.tasks_ops  # noqa: F401
-except Exception:
-    pass
+def _safe_import(mod: str) -> None:
+    try:
+        importlib.import_module(mod)
+    except Exception:
+        # do not kill API imports; worker should log it
+        try:
+            log.exception("celery: failed to import module: %s", mod)
+        except Exception:
+            pass
 
-# 3) DEV-M0: commercial loop tasks MUST be importable so devfactory.commercial.run_order is registered
-try:
-    import src.worker.tasks.devfactory_commercial  # noqa: F401
-except Exception:
-    pass
 
-# 4) Optional: force bind confirm (used by entrypoints / task name normalization)
+# Anchors that must be present to avoid unregistered-task drops
+for _m in [
+    "src.worker.register_tasks",
+    "src.worker.tasks_ops",
+    "src.worker.tasks.devfactory_commercial",
+    *CRITICAL_TASK_MODULES,
+]:
+    _safe_import(_m)
+
+# Optional: force bind confirm (used by entrypoints / task name normalization)
 try:
     from src.worker.ff_force_bind_confirm import *  # noqa: F401,F403
 except Exception:
     pass
-
 
 __all__ = ["app", "celery_env_summary", "print_celery_env_summary"]
