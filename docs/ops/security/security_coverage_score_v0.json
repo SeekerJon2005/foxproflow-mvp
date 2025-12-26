@@ -1,0 +1,324 @@
+{
+  "ts": "2025-12-26T06:25:13.685+03:00",
+  "source_policy_map": "C:\\Users\\Evgeniy\\projects\\foxproflow-wt\\A-run\\docs\\ops\\security\\security_policy_map_v0.json",
+  "counts": {
+    "total": 115,
+    "p0": 4,
+    "p1": 15,
+    "p2": 18,
+    "p3": 78
+  },
+  "unique_actions": {
+    "p0": 2,
+    "p1": 7,
+    "p2": 4
+  },
+  "risk_share_pct": 16.52,
+  "coverage_score_v0": 100.0,
+  "hot_domains": [
+    {
+      "count": 10,
+      "domain": "devfactory"
+    },
+    {
+      "count": 3,
+      "domain": "devorders"
+    },
+    {
+      "count": 2,
+      "domain": "autoplan"
+    },
+    {
+      "count": 2,
+      "domain": "trips"
+    },
+    {
+      "count": 1,
+      "domain": "autoplan_legacy"
+    },
+    {
+      "count": 1,
+      "domain": "driver"
+    }
+  ],
+  "top_risky": [
+    {
+      "path": "/api/devfactory/tasks/{task_id}/autofix/run",
+      "domain": "devfactory",
+      "methods": [
+        "POST"
+      ],
+      "score": 145,
+      "priority": "P0",
+      "action": "devfactory.autofix_admin",
+      "policy": "devfactory.autofix_admin"
+    },
+    {
+      "path": "/api/devfactory/tasks/{task_id}/autofix/disable",
+      "domain": "devfactory",
+      "methods": [
+        "POST"
+      ],
+      "score": 100,
+      "priority": "P0",
+      "action": "devfactory.autofix_admin",
+      "policy": "devfactory.autofix_admin"
+    },
+    {
+      "path": "/api/devfactory/tasks/{task_id}/autofix/enable",
+      "domain": "devfactory",
+      "methods": [
+        "POST"
+      ],
+      "score": 100,
+      "priority": "P0",
+      "action": "devfactory.autofix_admin",
+      "policy": "devfactory.autofix_admin"
+    },
+    {
+      "path": "/api/devfactory/tasks/{task_id}/autofix/kpi",
+      "domain": "devfactory",
+      "methods": [
+        "GET"
+      ],
+      "score": 90,
+      "priority": "P0",
+      "action": "devfactory.read",
+      "policy": "devfactory.read"
+    },
+    {
+      "path": "/api/autoplan/trips/{trip_id}/confirm",
+      "domain": "autoplan",
+      "methods": [
+        "POST"
+      ],
+      "score": 85,
+      "priority": "P1",
+      "action": "autoplan.apply",
+      "policy": "autoplan.apply"
+    },
+    {
+      "path": "/api/autoplan_legacy/run",
+      "domain": "autoplan_legacy",
+      "methods": [
+        "POST"
+      ],
+      "score": 80,
+      "priority": "P1",
+      "action": "autoplan_legacy.apply",
+      "policy": "autoplan_legacy.apply"
+    },
+    {
+      "path": "/api/autoplan/run",
+      "domain": "autoplan",
+      "methods": [
+        "POST"
+      ],
+      "score": 80,
+      "priority": "P1",
+      "action": "autoplan.apply",
+      "policy": "autoplan.apply"
+    },
+    {
+      "path": "/api/trips/{trip_id}/confirm",
+      "domain": "trips",
+      "methods": [
+        "POST"
+      ],
+      "score": 75,
+      "priority": "P1",
+      "action": "trips.apply",
+      "policy": "trips.apply"
+    },
+    {
+      "path": "/api/devfactory/tasks/intent",
+      "domain": "devfactory",
+      "methods": [
+        "POST"
+      ],
+      "score": 70,
+      "priority": "P1",
+      "action": "devfactory.write",
+      "policy": "devfactory.write"
+    },
+    {
+      "path": "/api/devorders/{dev_order_id}/link/billing",
+      "domain": "devorders",
+      "methods": [
+        "POST"
+      ],
+      "score": 70,
+      "priority": "P1",
+      "action": "devorders.link_write",
+      "policy": "devorders.link_write"
+    },
+    {
+      "path": "/api/devorders/{dev_order_id}/link/lead",
+      "domain": "devorders",
+      "methods": [
+        "POST"
+      ],
+      "score": 70,
+      "priority": "P1",
+      "action": "devorders.link_write",
+      "policy": "devorders.link_write"
+    },
+    {
+      "path": "/api/devorders/{dev_order_id}/link/tenant",
+      "domain": "devorders",
+      "methods": [
+        "POST"
+      ],
+      "score": 70,
+      "priority": "P1",
+      "action": "devorders.link_write",
+      "policy": "devorders.link_write"
+    },
+    {
+      "path": "/api/trips/autoplan/run/{run_id}",
+      "domain": "trips",
+      "methods": [
+        "GET"
+      ],
+      "score": 70,
+      "priority": "P1",
+      "action": "trips.apply",
+      "policy": "trips.apply"
+    },
+    {
+      "path": "/api/driver/auth/confirm",
+      "domain": "driver",
+      "methods": [
+        "POST"
+      ],
+      "score": 68,
+      "priority": "P1",
+      "action": "driver.apply",
+      "policy": "driver.apply"
+    },
+    {
+      "path": "/api/devfactory/orders",
+      "domain": "devfactory",
+      "methods": [
+        "POST"
+      ],
+      "score": 65,
+      "priority": "P1",
+      "action": "devfactory.write",
+      "policy": "devfactory.write"
+    },
+    {
+      "path": "/api/devfactory/orders/{dev_order_id}",
+      "domain": "devfactory",
+      "methods": [
+        "GET"
+      ],
+      "score": 65,
+      "priority": "P1",
+      "action": "devfactory.write",
+      "policy": "devfactory.write"
+    },
+    {
+      "path": "/api/devfactory/orders/{dev_order_id}/tasks",
+      "domain": "devfactory",
+      "methods": [
+        "GET"
+      ],
+      "score": 65,
+      "priority": "P1",
+      "action": "devfactory.write",
+      "policy": "devfactory.write"
+    },
+    {
+      "path": "/api/devfactory/orders/public/{dev_order_public_id}",
+      "domain": "devfactory",
+      "methods": [
+        "GET"
+      ],
+      "score": 65,
+      "priority": "P1",
+      "action": "devfactory.write",
+      "policy": "devfactory.write"
+    },
+    {
+      "path": "/api/devfactory/orders/recent",
+      "domain": "devfactory",
+      "methods": [
+        "GET"
+      ],
+      "score": 60,
+      "priority": "P1",
+      "action": "devfactory.read",
+      "policy": "devfactory.read"
+    },
+    {
+      "path": "/api/devorders/{dev_order_id}/bootstrap-tasks",
+      "domain": "devorders",
+      "methods": [
+        "POST"
+      ],
+      "score": 50,
+      "priority": "P2",
+      "action": "devorders.admin",
+      "policy": "devorders.admin"
+    },
+    {
+      "path": "/api/devfactory/tasks",
+      "domain": "devfactory",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "score": 40,
+      "priority": "P2",
+      "action": "devfactory.read",
+      "policy": "devfactory.read"
+    },
+    {
+      "path": "/api/devfactory/tasks/{task_id}",
+      "domain": "devfactory",
+      "methods": [
+        "GET",
+        "PATCH",
+        "PUT"
+      ],
+      "score": 40,
+      "priority": "P2",
+      "action": "devfactory.read",
+      "policy": "devfactory.read"
+    },
+    {
+      "path": "/api/devfactory/tasks/{task_id}/questions/regen",
+      "domain": "devfactory",
+      "methods": [
+        "POST"
+      ],
+      "score": 40,
+      "priority": "P2",
+      "action": "devfactory.read",
+      "policy": "devfactory.read"
+    },
+    {
+      "path": "/api/autoplan_legacy/trips/{trip_id}/revert",
+      "domain": "autoplan_legacy",
+      "methods": [
+        "POST"
+      ],
+      "score": 35,
+      "priority": "P2",
+      "action": "autoplan_legacy.read",
+      "policy": "autoplan_legacy.read"
+    },
+    {
+      "path": "/api/autoplan/config",
+      "domain": "autoplan",
+      "methods": [
+        "GET"
+      ],
+      "score": 35,
+      "priority": "P2",
+      "action": "autoplan.read",
+      "policy": "autoplan.read"
+    }
+  ]
+}
