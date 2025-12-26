@@ -136,3 +136,7 @@ celerybeat-schedule
 
 # Глобально разрешаем .gitkeep в любых игнорируемых папках
 !**/.gitkeep
+
+# FlowMeta local artifacts (generated)
+_contextpacks/
+_flowmeta/
