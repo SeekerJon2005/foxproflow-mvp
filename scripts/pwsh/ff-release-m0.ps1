@@ -7,6 +7,7 @@ Lane: A-RUN (compose/env/scripts/runbooks). No src/** edits, no scripts/sql/** e
 
 Goal:
   precheck ->
+  (optional) flowsec_secrets_scan ->
   (optional) fresh_db_drill (bootstrap_min) ->
   (optional) backup ->
   (optional) tag rollback image ->
@@ -31,6 +32,7 @@ Created by: Архитектор Яцков Евгений Анатольеви�
 [CmdletBinding(PositionalBinding=$false)]
 param(
   [string]$BaseUrl = $(if ($env:API_BASE) { $env:API_BASE } else { "http://127.0.0.1:8080" }),
+  [string]$HealthPath = $(if ($env:FF_HEALTH_PATH) { $env:FF_HEALTH_PATH } else { "/health" }),
 
   [string]$ComposeFile = "",
   [string]$ProjectName = $(if ($env:FF_COMPOSE_PROJECT) { $env:FF_COMPOSE_PROJECT } elseif ($env:COMPOSE_PROJECT_NAME) { $env:COMPOSE_PROJECT_NAME } else { "" }),
@@ -58,13 +60,28 @@ param(
   [switch]$VerifyDbContract,
   [switch]$VerifyDbContractPlus,
 
-  # Fresh DB drill (bootstrap_min + suite) via C-sql worktree
+  # Fresh DB drill (bootstrap_min + suite) via C-sql worktree + local ff-fresh-db-drill.ps1
   [switch]$SkipFreshDbDrill,
   [switch]$KeepFreshDbDrillDb,
   [string]$FreshDbSqlWorktree = "",
 
-  # Worker critical tasks smoke (celery inspect registered)
+  # Worker critical tasks smoke (celery inspect ping + registered tasks + optional log scan)
   [switch]$SkipWorkerTasksSmoke,
+  [string]$WorkerRequiredTasksCsv = "",
+  [int]$WorkerLogsSinceMin = 30,
+  [switch]$SkipWorkerUnregisteredLogCheck,
+  [int]$WorkerSmokeRetries = 10,
+  [int]$WorkerSmokeSleepSec = 2,
+  [int]$WorkerPingTimeoutSec = 10,
+  [int]$WorkerInspectTimeoutSec = 20,
+
+  # FlowSec secrets scan (optional if script exists)
+  [switch]$SkipFlowSecSecretsScan,
+  [string]$FlowSecMode = "all",
+  [switch]$FlowSecAdvisory,
+  [switch]$FlowSecAllowSoftFindings,
+  [string]$FlowSecAllowlistPath = "scripts/pwsh/sec/ff-sec-allowlist.txt",
+  [int]$FlowSecMaxFileBytes = 2000000,
 
   [switch]$NoBackup,
   [switch]$NoBuild,
@@ -77,7 +94,7 @@ param(
 )
 
 # NOTE: DO NOT place any executable statements before [CmdletBinding]/param.
-$VERSION = "2025-12-26.det.v14"
+$VERSION = "2025-12-26.det.v18"
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -93,8 +110,8 @@ function Now-Iso   { (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss.fffK") }
 function Repo-Root { (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path }
 
 function Ensure-Dir([string]$p) { if ($p) { New-Item -ItemType Directory -Force -Path $p | Out-Null } }
-function Set-Utf8([string]$Path, [string]$Text) { $d=Split-Path $Path -Parent; if($d){Ensure-Dir $d}; $Text | Set-Content -LiteralPath $Path -Encoding utf8NoBOM }
-function Add-Utf8([string]$Path, [string]$Text) { $d=Split-Path $Path -Parent; if($d){Ensure-Dir $d}; $Text | Add-Content -LiteralPath $Path -Encoding utf8NoBOM }
+function Set-Utf8([string]$Path, [string]$Text) { $d=Split-Path $Path -Parent; if($d){Ensure-Dir $d}; ($Text ?? "") | Set-Content -LiteralPath $Path -Encoding utf8NoBOM }
+function Add-Utf8([string]$Path, [string]$Text) { $d=Split-Path $Path -Parent; if($d){Ensure-Dir $d}; ($Text ?? "") | Add-Content -LiteralPath $Path -Encoding utf8NoBOM }
 
 function Write-Step([string]$msg) { Write-Host ("`n==> " + $msg) -ForegroundColor Cyan }
 function Write-Warn([string]$msg) { Write-Host ("WARN: " + $msg) -ForegroundColor Yellow }
@@ -107,6 +124,13 @@ function Normalize-BaseUrl([string]$u) {
   $u = $u.Trim()
   while ($u.EndsWith("/")) { $u = $u.Substring(0, $u.Length - 1) }
   return $u
+}
+
+function Normalize-HealthPath([string]$hp) {
+  if ([string]::IsNullOrWhiteSpace($hp)) { $hp = "/health" }
+  $hp = $hp.Trim()
+  if (-not $hp.StartsWith("/")) { $hp = "/" + $hp }
+  return $hp
 }
 
 function Normalize-ReleaseId([string]$rid) {
@@ -157,6 +181,87 @@ function Dc([string]$composeFile, [string]$projectName, [string[]]$composeArgs) 
   }
 }
 
+function Extract-ServiceNames([string]$text) {
+  if ([string]::IsNullOrWhiteSpace($text)) { return @() }
+  $names = New-Object System.Collections.Generic.List[string]
+  foreach ($line in ($text -split '\r?\n')) {
+    $t = ($line ?? "").Trim()
+    if (-not $t) { continue }
+    if ($t -match '^[A-Za-z0-9][A-Za-z0-9_-]*$') { $names.Add($t) | Out-Null }
+  }
+  return @($names.ToArray() | Sort-Object -Unique)
+}
+
+function Extract-EnvFilesFromCompose([string]$composeFile) {
+  $dir = Split-Path $composeFile -Parent
+  $lines = Get-Content -LiteralPath $composeFile -Encoding UTF8
+  $out = New-Object System.Collections.Generic.List[string]
+
+  for ($i=0; $i -lt $lines.Count; $i++) {
+    $ln = $lines[$i]
+
+    # inline: env_file: .env.docker   OR env_file: [.env.docker, .env.other]
+    $mInline = [regex]::Match($ln, '^\s*env_file\s*:\s*(.+?)\s*$')
+    if ($mInline.Success -and ($ln -notmatch '^\s*env_file\s*:\s*$')) {
+      $val = $mInline.Groups[1].Value.Trim()
+      $val = ($val -replace '\s+#.*$','').Trim()
+      if ($val.StartsWith('[') -and $val.EndsWith(']')) {
+        $inside = $val.Substring(1, $val.Length-2)
+        foreach ($part in ($inside -split ',')) {
+          $p = ($part ?? "").Trim()
+          if (-not $p) { continue }
+          if (($p.StartsWith('"') -and $p.EndsWith('"')) -or ($p.StartsWith("'") -and $p.EndsWith("'"))) {
+            $p = $p.Substring(1, $p.Length-2)
+          }
+          if (-not $p) { continue }
+          $out.Add($p) | Out-Null
+        }
+      } else {
+        if (($val.StartsWith('"') -and $val.EndsWith('"')) -or ($val.StartsWith("'") -and $val.EndsWith("'"))) {
+          $val = $val.Substring(1, $val.Length-2)
+        }
+        if ($val) { $out.Add($val) | Out-Null }
+      }
+      continue
+    }
+
+    # multiline:
+    # env_file:
+    #   - .env.docker
+    $mStart = [regex]::Match($ln, '^(\s*)env_file\s*:\s*$')
+    if ($mStart.Success) {
+      $baseIndent = $mStart.Groups[1].Value.Length
+      for ($j=$i+1; $j -lt $lines.Count; $j++) {
+        $ln2 = $lines[$j]
+        if ([string]::IsNullOrWhiteSpace($ln2)) { continue }
+        if ($ln2 -match '^\s*#') { continue }
+
+        $indent2 = ([regex]::Match($ln2, '^\s*').Value.Length)
+        if ($indent2 -le $baseIndent) { break }
+
+        $mItem = [regex]::Match($ln2, '^\s*-\s*(.+?)\s*$')
+        if ($mItem.Success) {
+          $p = $mItem.Groups[1].Value.Trim()
+          $p = ($p -replace '\s+#.*$','').Trim()
+          if (($p.StartsWith('"') -and $p.EndsWith('"')) -or ($p.StartsWith("'") -and $p.EndsWith("'"))) {
+            $p = $p.Substring(1, $p.Length-2)
+          }
+          if ($p) { $out.Add($p) | Out-Null }
+        }
+      }
+    }
+  }
+
+  $uniq = @($out.ToArray() | Where-Object { $_ } | Sort-Object -Unique)
+  $abs = @()
+  foreach ($p in $uniq) {
+    $pp = $p
+    if (-not [System.IO.Path]::IsPathRooted($pp)) { $pp = Join-Path $dir $pp }
+    $abs += (Resolve-Path -LiteralPath $pp -ErrorAction SilentlyContinue)?.Path ?? $pp
+  }
+  return @($abs | Sort-Object -Unique)
+}
+
 function Http-Get([string]$url, [int]$timeoutSec = 12) {
   try {
     $tmp = [System.IO.Path]::GetTempFileName()
@@ -175,27 +280,59 @@ function Http-Get([string]$url, [int]$timeoutSec = 12) {
   }
 }
 
-function Wait-ApiReady([string]$baseUrl, [int]$timeoutSec, [int]$pollSec, [string]$evidenceDir) {
+function Wait-ApiReady([string]$baseUrl, [string]$healthPath, [int]$timeoutSec, [int]$pollSec, [string]$evidenceDir) {
   $deadline = (Get-Date).AddSeconds($timeoutSec)
-  $u = ($baseUrl.TrimEnd("/") + "/health/extended")
-  $logPath = Join-Path $evidenceDir "wait_api_health_extended.log"
+  $hp = Normalize-HealthPath $healthPath
+  $u = ($baseUrl.TrimEnd("/") + $hp)
 
+  $logPath = Join-Path $evidenceDir "wait_api_health_extended.log"
+  $metaPath = Join-Path $evidenceDir "wait_api_target.txt"
+  Set-Utf8 $metaPath ("ts={0}`nurl={1}`nhealth_path={2}`n" -f (Now-Iso), $u, $hp)
+
+  $nfStreak = 0
   while ((Get-Date) -lt $deadline) {
     try {
       $r = Http-Get -url $u -timeoutSec 10
       Add-Utf8 $logPath ("[{0}] code={1}" -f (Now-Iso), $r.code)
+
+      if ($r.code -eq 404) {
+        $nfStreak++
+        if ($nfStreak -ge 3) {
+          try { Set-Utf8 (Join-Path $evidenceDir "wait_api_last_body.txt") ($r.body ?? "") } catch {}
+          throw "Health endpoint not found (404): $u"
+        }
+      } else {
+        $nfStreak = 0
+      }
+
       if ($r.code -ge 200 -and $r.code -lt 300) {
         try {
           $j = $r.body | ConvertFrom-Json -Depth 64
-          if ($j.ready -eq $true) {
-            Set-Utf8 (Join-Path $evidenceDir "health_extended.json") ($r.body ?? "")
-            return $true
+          $props = @($j.PSObject.Properties.Name)
+
+          if ($props -contains "ready") {
+            if ($j.ready -eq $true) { Set-Utf8 (Join-Path $evidenceDir "health_extended.json") ($r.body ?? ""); return $true }
           }
-        } catch { }
+          elseif ($props -contains "ok") {
+            if ($j.ok -eq $true) { Set-Utf8 (Join-Path $evidenceDir "health_extended.json") ($r.body ?? ""); return $true }
+          }
+          elseif ($props -contains "status") {
+            $s = ($j.status ?? "").ToString().ToLowerInvariant()
+            if ($s -in @("ok","healthy","up")) { Set-Utf8 (Join-Path $evidenceDir "health_extended.json") ($r.body ?? ""); return $true }
+          }
+
+          # Unknown schema but 2xx => ready enough for RUN gate
+          Set-Utf8 (Join-Path $evidenceDir "health_extended.json") ($r.body ?? "")
+          return $true
+        } catch {
+          Set-Utf8 (Join-Path $evidenceDir "health_extended.json") ($r.body ?? "")
+          return $true
+        }
       }
     } catch {
       Add-Utf8 $logPath ("[{0}] error={1}" -f (Now-Iso), $_.Exception.Message)
     }
+
     Start-Sleep -Seconds $pollSec
   }
 
@@ -222,6 +359,7 @@ function Write-RollbackStory([string]$path, [hashtable]$ctx) {
   $t += ("release_id: {0}" -f $ctx.release_id)
   $t += ("pre_git_sha: {0}" -f $ctx.pre_sha)
   $t += ("base_url: {0}" -f $ctx.base_url)
+  $t += ("health_path: {0}" -f ($ctx.health_path ?? "/health"))
   if ($ctx.compose_file) { $t += ("compose_file: {0}" -f $ctx.compose_file) }
   if ($ctx.project_name) { $t += ("project_name: {0}" -f $ctx.project_name) }
   if ($ctx.backup_dir) { $t += ("backup_dir: {0}" -f $ctx.backup_dir) }
@@ -237,7 +375,9 @@ function Write-RollbackStory([string]$path, [hashtable]$ctx) {
   if ($ctx.project_name) { $dc += " -p $($ctx.project_name)" }
   $t += ("3) {0} up -d --build api worker beat" -f $dc)
 
-  $t += ("4) curl.exe -4 --http1.1 --noproxy 127.0.0.1 `"{0}/health/extended`"" -f $ctx.base_url)
+  $hp = ($ctx.health_path ?? "/health")
+  if (-not $hp.StartsWith("/")) { $hp = "/" + $hp }
+  $t += ("4) curl.exe -4 --http1.1 --noproxy 127.0.0.1 `"{0}{1}`"" -f $ctx.base_url, $hp)
   $t += ""
   Set-Utf8 $path ($t -join "`n")
 }
@@ -415,7 +555,7 @@ function BestEffort-TagRollbackImage([string]$composeFile, [string]$projectName,
     $q = Dc -composeFile $composeFile -projectName $projectName -composeArgs @("ps","-q","api")
     Add-Utf8 $log ("argv={0}`n{1}`nexit_code={2}`n" -f $q.argv, $q.out, $q.code)
 
-    $cid = ($q.out.Trim() -split "`r?`n" | Select-Object -First 1).Trim()
+    $cid = ($q.out.Trim() -split '\r?\n' | Select-Object -First 1).Trim()
     if ([string]::IsNullOrWhiteSpace($cid)) {
       $src = "foxproflow/app:latest"
       $dst = ("foxproflow/app:rollback_{0}" -f $releaseId)
@@ -526,11 +666,160 @@ function Select-ExistingServices([string[]]$allServices, [string[]]$preferred) {
   return $allServices
 }
 
+function Invoke-FlowSecSecretsScan(
+  [string]$repoRoot,
+  [string]$evidenceDir
+) {
+  $scan = Join-Path $PSScriptRoot "sec\ff-sec-scan-secrets.ps1"
+  if (-not (Test-Path -LiteralPath $scan)) { return [pscustomobject]@{ skipped=$true; ok=$null; script=$scan; log=$null } }
+  if ($SkipFlowSecSecretsScan) { return [pscustomobject]@{ skipped=$true; ok=$null; script=$scan; log=$null } }
+
+  $log = Join-Path $evidenceDir "flowsec_secrets_scan.log"
+  $p = Get-ScriptParamNames $scan
+  Set-Utf8 (Join-Path $evidenceDir "flowsec_secrets_params_detected.json") (($p | ConvertTo-Json -Depth 10))
+
+  $argsList = New-Object System.Collections.Generic.List[string]
+
+  if ($p -contains "Mode") { $argsList.AddRange([string[]]@("-Mode",$FlowSecMode)) | Out-Null }
+  if ($FlowSecAdvisory -and ($p -contains "Advisory")) { $argsList.Add("-Advisory") | Out-Null }
+  if ($FlowSecAllowSoftFindings -and ($p -contains "AllowSoftFindings")) { $argsList.Add("-AllowSoftFindings") | Out-Null }
+
+  if ($p -contains "AllowlistPath") { $argsList.AddRange([string[]]@("-AllowlistPath",$FlowSecAllowlistPath)) | Out-Null }
+  elseif ($p -contains "Allowlist") { $argsList.AddRange([string[]]@("-Allowlist",$FlowSecAllowlistPath)) | Out-Null }
+
+  if ($p -contains "MaxFileBytes") { $argsList.AddRange([string[]]@("-MaxFileBytes","$FlowSecMaxFileBytes")) | Out-Null }
+
+  if ($p -contains "RepoRoot") { $argsList.AddRange([string[]]@("-RepoRoot",$repoRoot)) | Out-Null }
+  elseif ($p -contains "Root") { $argsList.AddRange([string[]]@("-Root",$repoRoot)) | Out-Null }
+
+  $r = Run-PwshScript -ScriptPath $scan -Args ([string[]]$argsList.ToArray()) -LogPath $log
+  if ($r.code -ne 0) { throw "FlowSec secrets scan failed (exit=$($r.code)). See: $log" }
+
+  return [pscustomobject]@{
+    skipped=$false; ok=$true; script=$scan; log=$log;
+    mode=$FlowSecMode; advisory=[bool]$FlowSecAdvisory; allow_soft_findings=[bool]$FlowSecAllowSoftFindings;
+    allowlist_path=$FlowSecAllowlistPath; max_file_bytes=[int]$FlowSecMaxFileBytes
+  }
+}
+
+function Invoke-FreshDbDrill(
+  [string]$repoRoot,
+  [string]$composeFile,
+  [string]$projectName,
+  [string]$evidenceDir,
+  [string]$evSuffix,
+  [string]$freshDbSqlWorktree
+) {
+  $drill = Join-Path $PSScriptRoot "ff-fresh-db-drill.ps1"
+  if (-not (Test-Path -LiteralPath $drill)) { throw "Missing fresh-db drill script: $drill" }
+
+  $sqlWt = $freshDbSqlWorktree
+  if ([string]::IsNullOrWhiteSpace($sqlWt)) { $sqlWt = Resolve-SiblingWorktree -repoRoot $repoRoot -siblingName "C-sql" }
+  if (-not $sqlWt) { throw "C-sql worktree not found near '$repoRoot'. Provide -FreshDbSqlWorktree explicitly." }
+
+  $suiteAbs = Join-Path $sqlWt "scripts\sql\verify\suites\bootstrap_min.txt"
+  if (-not (Test-Path -LiteralPath $suiteAbs)) { throw "bootstrap_min suite not found: $suiteAbs" }
+
+  $fdDir = Join-Path $evidenceDir "fresh_db_drill_bootstrap_min"
+  Ensure-Dir $fdDir
+
+  $p = Get-ScriptParamNames $drill
+  Set-Utf8 (Join-Path $fdDir "params_detected.json") (($p | ConvertTo-Json -Depth 10))
+
+  $rid = ("m0_freshdb_" + $evSuffix)
+  $argsList = New-Object System.Collections.Generic.List[string]
+
+  if ($p -contains "ReleaseId") { $argsList.AddRange([string[]]@("-ReleaseId",$rid)) | Out-Null }
+  if ($p -contains "ComposeFile") { $argsList.AddRange([string[]]@("-ComposeFile",$composeFile)) | Out-Null }
+  if ($p -contains "ProjectName") { $argsList.AddRange([string[]]@("-ProjectName",$projectName)) | Out-Null }
+  if ($p -contains "SuiteFile") { $argsList.AddRange([string[]]@("-SuiteFile",$suiteAbs)) | Out-Null }
+
+  if ($KeepFreshDbDrillDb) {
+    if ($p -contains "KeepTempDb") { $argsList.Add("-KeepTempDb") | Out-Null }
+    elseif ($p -contains "KeepDb") { $argsList.Add("-KeepDb") | Out-Null }
+  }
+
+  if ($p -contains "EvidenceRoot") { $argsList.AddRange([string[]]@("-EvidenceRoot",$evidenceDir)) | Out-Null }
+  elseif ($p -contains "EvidenceDir") { $argsList.AddRange([string[]]@("-EvidenceDir",$fdDir)) | Out-Null }
+  elseif ($p -contains "OutDir") { $argsList.AddRange([string[]]@("-OutDir",$fdDir)) | Out-Null }
+
+  Set-Utf8 (Join-Path $fdDir "drill_meta.json") (
+    ([pscustomobject]@{
+      ts = Now-Iso
+      script = $drill
+      sql_worktree = $sqlWt
+      suite_abs = $suiteAbs
+      keep_db = [bool]$KeepFreshDbDrillDb
+      args = $argsList.ToArray()
+    } | ConvertTo-Json -Depth 40)
+  )
+
+  $log = Join-Path $evidenceDir "fresh_db_drill.log"
+  $r = Run-PwshScript -ScriptPath $drill -Args ([string[]]$argsList.ToArray()) -LogPath $log
+  if ($r.code -ne 0) { throw "Fresh DB drill failed (exit=$($r.code)). See: $log" }
+
+  return [pscustomobject]@{ ok=$true; script=$drill; evidence_dir=$fdDir; sql_worktree=$sqlWt }
+}
+
+function Invoke-WorkerTasksSmoke(
+  [string]$composeFile,
+  [string]$projectName,
+  [string]$evidenceDir,
+  [string]$evSuffix
+) {
+  $ws = Join-Path $PSScriptRoot "ff-worker-critical-tasks-smoke.ps1"
+  if (-not (Test-Path -LiteralPath $ws)) { throw "Missing worker tasks smoke script: $ws" }
+
+  $wsDir = Join-Path $evidenceDir "worker_tasks_smoke"
+  Ensure-Dir $wsDir
+
+  $p = Get-ScriptParamNames $ws
+  Set-Utf8 (Join-Path $wsDir "params_detected.json") (($p | ConvertTo-Json -Depth 10))
+
+  $argsList = New-Object System.Collections.Generic.List[string]
+  if ($p -contains "ReleaseId") { $argsList.AddRange([string[]]@("-ReleaseId", ("worker_tasks_" + $evSuffix))) | Out-Null }
+  if ($p -contains "ComposeFile") { $argsList.AddRange([string[]]@("-ComposeFile", $composeFile)) | Out-Null }
+  if ($p -contains "ProjectName") { $argsList.AddRange([string[]]@("-ProjectName", $projectName)) | Out-Null }
+  if ($p -contains "EvidenceDir") { $argsList.AddRange([string[]]@("-EvidenceDir", $wsDir)) | Out-Null }
+
+  if (-not [string]::IsNullOrWhiteSpace($WorkerRequiredTasksCsv) -and ($p -contains "RequiredTasksCsv")) {
+    $argsList.AddRange([string[]]@("-RequiredTasksCsv",$WorkerRequiredTasksCsv)) | Out-Null
+  }
+
+  if ($p -contains "Retries") { $argsList.AddRange([string[]]@("-Retries","$WorkerSmokeRetries")) | Out-Null }
+  if ($p -contains "SleepSec") { $argsList.AddRange([string[]]@("-SleepSec","$WorkerSmokeSleepSec")) | Out-Null }
+  if ($p -contains "PingTimeoutSec") { $argsList.AddRange([string[]]@("-PingTimeoutSec","$WorkerPingTimeoutSec")) | Out-Null }
+  if ($p -contains "InspectTimeoutSec") { $argsList.AddRange([string[]]@("-InspectTimeoutSec","$WorkerInspectTimeoutSec")) | Out-Null }
+
+  if (-not $SkipWorkerUnregisteredLogCheck -and ($p -contains "CheckUnregisteredInLogs")) {
+    $argsList.Add("-CheckUnregisteredInLogs") | Out-Null
+    if ($p -contains "LogsSinceMin") { $argsList.AddRange([string[]]@("-LogsSinceMin","$WorkerLogsSinceMin")) | Out-Null }
+  } else {
+    if ($p -contains "LogsSinceMin") { $argsList.AddRange([string[]]@("-LogsSinceMin","$WorkerLogsSinceMin")) | Out-Null }
+  }
+
+  Set-Utf8 (Join-Path $wsDir "worker_smoke_meta.json") (
+    ([pscustomobject]@{
+      ts = Now-Iso
+      script = $ws
+      evidence_dir = $wsDir
+      args = $argsList.ToArray()
+    } | ConvertTo-Json -Depth 40)
+  )
+
+  $log = Join-Path $wsDir "worker_smoke_runner.log"
+  $r = Run-PwshScript -ScriptPath $ws -Args ([string[]]$argsList.ToArray()) -LogPath $log
+  if ($r.code -ne 0) { throw "worker tasks smoke failed (exit=$($r.code)). See: $log" }
+
+  return [pscustomobject]@{ ok=$true; script=$ws; evidence_dir=$wsDir }
+}
+
 # -----------------------------
 # Main
 # -----------------------------
 $repoRoot = Repo-Root
 $BaseUrl = Normalize-BaseUrl $BaseUrl
+$HealthPath = Normalize-HealthPath $HealthPath
 $ComposeFile = Resolve-ComposeFile -repoRoot $repoRoot -composeFile $ComposeFile
 
 if ([string]::IsNullOrWhiteSpace($ProjectName)) {
@@ -555,7 +844,6 @@ if ($ReleaseId -notlike "release_m0_*") {
 
 $evidenceDir = Join-Path $repoRoot ("ops\_local\evidence\{0}" -f $evName)
 Ensure-Dir $evidenceDir
-
 Write-Output ("evidence: " + $evidenceDir)
 
 $started = Now-Iso
@@ -576,8 +864,12 @@ $failReason = ""
 $ok = $true
 $composeServices = @()
 
-$freshDrill = [ordered]@{ skipped=$true; keep_db=[bool]$KeepFreshDbDrillDb; sql_worktree=$null; drill_script=$null; temp_db=$null; evidence_dir=$null; ok=$null }
-$workerSmoke = [ordered]@{ skipped=$true; ok=$null; script=$null; evidence_dir=$null }
+$flowsec = [ordered]@{ skipped=$true; ok=$null; script=$null; log=$null }
+$freshDrill = [ordered]@{ skipped=$true; keep_db=[bool]$KeepFreshDbDrillDb; sql_worktree=$null; script=$null; evidence_dir=$null; ok=$null }
+$workerSmoke = [ordered]@{
+  skipped=$true; ok=$null; script=$null; evidence_dir=$null;
+  required_tasks_csv=$WorkerRequiredTasksCsv; logs_since_min=[int]$WorkerLogsSinceMin; skip_unregistered_log_check=[bool]$SkipWorkerUnregisteredLogCheck
+}
 
 function Step([string]$name, [int]$failExitCode, [scriptblock]$fn) {
   $t0 = Now-Iso
@@ -602,6 +894,7 @@ Set-Utf8 (Join-Path $evidenceDir "release_meta.json") (
     evidence_name = $evName
     started = $started
     base_url = $BaseUrl
+    health_path = $HealthPath
     compose_file = $ComposeFile
     project_name = $ProjectName
     migrate_mode_requested = $MigrateMode
@@ -611,13 +904,17 @@ Set-Utf8 (Join-Path $evidenceDir "release_meta.json") (
     keep_fresh_db_drill_db = [bool]$KeepFreshDbDrillDb
     fresh_db_sql_worktree = $FreshDbSqlWorktree
     skip_worker_tasks_smoke = [bool]$SkipWorkerTasksSmoke
+    worker_required_tasks_csv = $WorkerRequiredTasksCsv
+    worker_logs_since_min = [int]$WorkerLogsSinceMin
+    skip_worker_unregistered_log_check = [bool]$SkipWorkerUnregisteredLogCheck
     no_backup = [bool]$NoBackup
     no_build  = [bool]$NoBuild
     no_deploy = [bool]$NoDeploy
     no_smoke  = [bool]$NoSmoke
     no_rollback = [bool]$NoRollback
+    skip_flowsec_secrets_scan = [bool]$SkipFlowSecSecretsScan
     git_pre = $gitPre
-  } | ConvertTo-Json -Depth 60)
+  } | ConvertTo-Json -Depth 80)
 )
 
 try {
@@ -631,7 +928,41 @@ try {
     Set-Utf8 (Join-Path $evidenceDir "docker_compose_services.txt") ("argv={0}`n`n{1}`nexit_code={2}`n" -f $sv.argv, $sv.out, $sv.code)
     if ($sv.code -ne 0) { throw "docker compose config --services failed (exit=$($sv.code))" }
 
-    $script:composeServices = @($sv.out -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $raw = @($sv.out -split '\r?\n' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    Set-Utf8 (Join-Path $evidenceDir "docker_compose_services_raw.txt") (($raw -join "`n") + "`n")
+
+    $script:composeServices = Extract-ServiceNames $sv.out
+    Set-Utf8 (Join-Path $evidenceDir "compose_services_extracted.txt") ((@($script:composeServices) -join "`n") + "`n")
+
+    # env_file existence check (fail early, instead of deploy crash)
+    $envFilesAbs = Extract-EnvFilesFromCompose -composeFile $ComposeFile
+    Set-Utf8 (Join-Path $evidenceDir "compose_env_files.txt") ((@($envFilesAbs) -join "`n") + "`n")
+
+    $missing = @()
+    foreach ($f in @($envFilesAbs)) {
+      if (-not (Test-Path -LiteralPath $f)) { $missing += $f }
+    }
+    if (@($missing).Count -gt 0) {
+      throw ("Missing env_file(s) referenced by compose: `n" + (@($missing) -join "`n"))
+    }
+  }
+
+  Write-Step "FLOWSEC: SECRETS SCAN"
+  if ($SkipFlowSecSecretsScan) {
+    Write-Warn "SkipFlowSecSecretsScan: skipping secrets scan"
+    $flowsec.skipped = $true
+    $steps.Add([pscustomobject]@{ name="flowsec_secrets_scan"; ok=$true; skipped=$true; ts=Now-Iso }) | Out-Null
+  } else {
+    Step "flowsec_secrets_scan" 12 {
+      $res = Invoke-FlowSecSecretsScan -repoRoot $repoRoot -evidenceDir $evidenceDir
+      $flowsec = [ordered]@{}
+      foreach ($k in $res.PSObject.Properties.Name) { $flowsec[$k] = $res.$k }
+      if ($res.skipped -eq $true) {
+        Write-Warn "FlowSec secrets scan script not found or skipped"
+      } else {
+        Write-Ok "FlowSec secrets scan PASS"
+      }
+    }
   }
 
   Write-Step "WRITE rollback story (initial)"
@@ -640,6 +971,7 @@ try {
       release_id = $ReleaseId
       pre_sha = $preSha
       base_url = $BaseUrl
+      health_path = $HealthPath
       repo_root = $repoRoot
       compose_file = $ComposeFile
       project_name = $ProjectName
@@ -650,9 +982,7 @@ try {
     Write-Warn "NoRollback: skipping rollback story"
   }
 
-  # -----------------------------
   # FRESH DB DRILL (bootstrap_min)
-  # -----------------------------
   Write-Step "FRESH DB DRILL (bootstrap_min)"
   if ($SkipFreshDbDrill) {
     $freshDrill.skipped = $true
@@ -661,71 +991,11 @@ try {
   } else {
     Step "fresh_db_drill_bootstrap_min" 10 {
       $freshDrill.skipped = $false
-
-      $drill = Join-Path $PSScriptRoot "ff-drill-fresh-db-bootstrap-min.ps1"
-      if (-not (Test-Path -LiteralPath $drill)) { throw "Missing drill script: $drill" }
-      $freshDrill.drill_script = $drill
-
-      $sqlWt = $FreshDbSqlWorktree
-      if ([string]::IsNullOrWhiteSpace($sqlWt)) { $sqlWt = Resolve-SiblingWorktree -repoRoot $repoRoot -siblingName "C-sql" }
-      if (-not $sqlWt) { throw "C-sql worktree not found near '$repoRoot'. Provide -FreshDbSqlWorktree explicitly." }
-      $freshDrill.sql_worktree = $sqlWt
-
-      $bootstrapAbs = Join-Path $sqlWt "scripts\sql\bootstrap_min_apply.sql"
-      $suiteAbs     = Join-Path $sqlWt "scripts\sql\verify\suites\bootstrap_min.txt"
-      if (-not (Test-Path -LiteralPath $bootstrapAbs)) { throw "bootstrap_min_apply.sql not found: $bootstrapAbs" }
-      if (-not (Test-Path -LiteralPath $suiteAbs))     { throw "bootstrap_min suite not found: $suiteAbs" }
-
-      $drillDir = Join-Path $evidenceDir "fresh_db_drill_bootstrap_min"
-      Ensure-Dir $drillDir
-      $freshDrill.evidence_dir = $drillDir
-
-      $rand = Get-Random -Minimum 1000 -Maximum 9999
-      $tempDb = Sanitize-DbName ("tmp_gate_bootmin_{0}_{1}" -f $evSuffix, $rand)
-      $freshDrill.temp_db = $tempDb
-
-      $p = Get-ScriptParamNames $drill
-      Set-Utf8 (Join-Path $drillDir "params_detected.json") (($p | ConvertTo-Json -Depth 10))
-
-      $argList = New-Object System.Collections.Generic.List[string]
-
-      if ($p -contains "ComposeFile") { $argList.AddRange([string[]]@("-ComposeFile",$ComposeFile)) | Out-Null }
-      if ($p -contains "ProjectName") { $argList.AddRange([string[]]@("-ProjectName",$ProjectName)) | Out-Null }
-
-      if ($p -contains "TempDbName") { $argList.AddRange([string[]]@("-TempDbName",$tempDb)) | Out-Null }
-      elseif ($p -contains "DbName") { $argList.AddRange([string[]]@("-DbName",$tempDb)) | Out-Null }
-
-      if ($p -contains "BootstrapSqlFile") { $argList.AddRange([string[]]@("-BootstrapSqlFile",$bootstrapAbs)) | Out-Null }
-      elseif ($p -contains "BootstrapSqlPath") { $argList.AddRange([string[]]@("-BootstrapSqlPath",$bootstrapAbs)) | Out-Null }
-
-      if ($p -contains "SuiteFile") { $argList.AddRange([string[]]@("-SuiteFile",$suiteAbs)) | Out-Null }
-
-      if ($p -contains "EvidenceDir") { $argList.AddRange([string[]]@("-EvidenceDir",$drillDir)) | Out-Null }
-      elseif ($p -contains "OutDir")  { $argList.AddRange([string[]]@("-OutDir",$drillDir)) | Out-Null }
-
-      if ($KeepFreshDbDrillDb) {
-        if ($p -contains "KeepTempDb") { $argList.Add("-KeepTempDb") | Out-Null }
-        elseif ($p -contains "KeepDb") { $argList.Add("-KeepDb") | Out-Null }
-      }
-
-      Set-Utf8 (Join-Path $drillDir "drill_meta.json") (
-        ([pscustomobject]@{
-          ts = Now-Iso
-          drill = $drill
-          sql_worktree = $sqlWt
-          bootstrap_abs = $bootstrapAbs
-          suite_abs = $suiteAbs
-          temp_db = $tempDb
-          keep_db = [bool]$KeepFreshDbDrillDb
-          args = $argList.ToArray()
-        } | ConvertTo-Json -Depth 40)
-      )
-
-      $log = Join-Path $drillDir "drill.log"
-      $r = Run-PwshScript -ScriptPath $drill -Args ([string[]]$argList.ToArray()) -LogPath $log
-      if ($r.code -ne 0) { throw "Fresh DB drill failed (exit=$($r.code)). See: $log" }
-
+      $res = Invoke-FreshDbDrill -repoRoot $repoRoot -composeFile $ComposeFile -projectName $ProjectName -evidenceDir $evidenceDir -evSuffix $evSuffix -freshDbSqlWorktree $FreshDbSqlWorktree
       $freshDrill.ok = $true
+      $freshDrill.script = $res.script
+      $freshDrill.evidence_dir = $res.evidence_dir
+      $freshDrill.sql_worktree = $res.sql_worktree
       Write-Ok "Fresh DB drill PASS"
     }
   }
@@ -771,9 +1041,18 @@ try {
     $steps.Add([pscustomobject]@{ name="build"; ok=$true; skipped=$true; ts=Now-Iso }) | Out-Null
   } else {
     Step "build" 8 {
-      $b = Dc -composeFile $ComposeFile -projectName $ProjectName -composeArgs @("build","api","worker","beat")
-      Set-Utf8 (Join-Path $evidenceDir "build.log") ("argv={0}`n`n{1}`nexit_code={2}`n" -f $b.argv, $b.out, $b.code)
-      if ($b.code -ne 0) { throw "build failed (exit=$($b.code))" }
+      $buildLog = Join-Path $evidenceDir "build.log"
+
+      $dockerArgv = New-Object System.Collections.Generic.List[string]
+      $dockerArgv.AddRange([string[]]@("compose","--ansi","never","-f",$ComposeFile)) | Out-Null
+      if ($ProjectName) { $dockerArgv.AddRange([string[]]@("-p",$ProjectName)) | Out-Null }
+      $dockerArgv.AddRange([string[]]@("build","--progress","plain","api","worker","beat")) | Out-Null
+
+      Set-Utf8 $buildLog ("ts={0}`nargv=docker {1}`n`n" -f (Now-Iso), ($dockerArgv.ToArray() -join " "))
+      & docker @($dockerArgv.ToArray()) 2>&1 | Tee-Object -FilePath $buildLog -Append
+      $code = $LASTEXITCODE
+      Add-Utf8 $buildLog ("`nexit_code={0}`n" -f $code)
+      if ($code -ne 0) { throw "build failed (exit=$code)" }
     }
   }
 
@@ -789,10 +1068,101 @@ try {
   if ($MigrateMode -eq "skip") {
     Write-Warn "MigrateMode=skip: skipping migrate"
     $steps.Add([pscustomobject]@{ name="migrate"; ok=$true; skipped=$true; ts=Now-Iso }) | Out-Null
-  } else {
-    # keep your current migrate implementation here if needed (this template preserves existing modes outside)
-    Write-Warn "MigrateMode '$MigrateMode' must be implemented here as in your previous version."
-    $steps.Add([pscustomobject]@{ name="migrate"; ok=$true; skipped=$true; note="not executed in template"; ts=Now-Iso }) | Out-Null
+  }
+  elseif ($MigrateMode -eq "bootstrap_all_min") {
+    Step "migrate_bootstrap_all_min" 3 {
+      $migRunner = if ($MigrateScript) { $MigrateScript } else { (Join-Path $PSScriptRoot "ff-db-bootstrap-all-min.ps1") }
+      if (-not (Test-Path -LiteralPath $migRunner)) { throw "migrate runner not found: $migRunner" }
+
+      $log = Join-Path $evidenceDir "migrate_bootstrap_all_min.log"
+      $p = Get-ScriptParamNames $migRunner
+
+      $argsList = New-Object System.Collections.Generic.List[string]
+      if ($p -contains "ComposeFile") { $argsList.AddRange([string[]]@("-ComposeFile",$ComposeFile)) | Out-Null }
+      if ($p -contains "ProjectName") { $argsList.AddRange([string[]]@("-ProjectName",$ProjectName)) | Out-Null }
+      if ($p -contains "Apply") { $argsList.Add("-Apply") | Out-Null }
+
+      Set-Utf8 $log ("== MIGRATE bootstrap_all_min ==`nrunner={0}`nts={1}`nargv={2}`n" -f $migRunner, (Now-Iso), ($argsList.ToArray() -join " "))
+      $r = Run-PwshScript -ScriptPath $migRunner -Args ([string[]]$argsList.ToArray()) -LogPath $log -AppendLog
+      if ($r.code -ne 0) { throw "migrate bootstrap_all_min failed (exit=$($r.code))" }
+    }
+  }
+  elseif ($MigrateMode -eq "sql_dirs") {
+    Step "migrate_sql_dirs" 3 {
+      $auto = Resolve-SqlDirs-Auto -repoRoot $repoRoot
+
+      $migDir = $SqlMigrationsDir
+      if ([string]::IsNullOrWhiteSpace($migDir)) { $migDir = $auto.mig_dir }
+
+      $fixAutoDir = $SqlFixpacksAutoDir
+      if ([string]::IsNullOrWhiteSpace($fixAutoDir)) { $fixAutoDir = $auto.fix_auto_dir }
+
+      $sources = [ordered]@{
+        ts = Now-Iso
+        migrate_mode = "sql_dirs"
+        repo_root = $repoRoot
+        compose_file = $ComposeFile
+        project_name = $ProjectName
+        migrations_dir = $migDir
+        fixpacks_auto_dir = $fixAutoDir
+        apply_gate_fixpacks = [bool]$ApplyGateFixpacks
+      }
+
+      $plan = New-Object System.Collections.Generic.List[string]
+
+      if ($migDir -and (Test-Path -LiteralPath $migDir)) {
+        $migs = Get-ChildItem -LiteralPath $migDir -File -Filter "*.sql" -ErrorAction SilentlyContinue | Sort-Object Name
+        foreach ($f in $migs) { $plan.Add($f.FullName) | Out-Null }
+      }
+
+      if ($ApplyGateFixpacks -and $fixAutoDir -and (Test-Path -LiteralPath $fixAutoDir)) {
+        $fx = Get-ChildItem -LiteralPath $fixAutoDir -File -Filter "*.sql" -ErrorAction SilentlyContinue | Sort-Object Name
+        foreach ($f in $fx) { $plan.Add($f.FullName) | Out-Null }
+      }
+
+      $sources.migrations_files = @()
+      if ($migDir -and (Test-Path -LiteralPath $migDir)) { $sources.migrations_files = @((Get-ChildItem -LiteralPath $migDir -File -Filter "*.sql" | Sort-Object Name).FullName) }
+
+      $sources.fixpacks_files = @()
+      if ($ApplyGateFixpacks -and $fixAutoDir -and (Test-Path -LiteralPath $fixAutoDir)) { $sources.fixpacks_files = @((Get-ChildItem -LiteralPath $fixAutoDir -File -Filter "*.sql" | Sort-Object Name).FullName) }
+
+      Set-Utf8 (Join-Path $evidenceDir "migrate_sql_dirs_sources.json") (($sources | ConvertTo-Json -Depth 60))
+
+      $planPath = Join-Path $evidenceDir "migrate_sql_dirs_plan.txt"
+      Set-Utf8 $planPath ((@($plan.ToArray()) -join "`n") + "`n")
+
+      if (-not $plan -or $plan.Count -eq 0) {
+        Write-Warn "sql_dirs: no sql files found (plan empty) — nothing to apply"
+        return
+      }
+
+      foreach ($f in $plan.ToArray()) {
+        $name = [System.IO.Path]::GetFileName($f)
+        $log = Join-Path $evidenceDir ("migrate_sql_{0}.log" -f $name)
+        $r = Invoke-PsqlSqlFile -composeFile $ComposeFile -projectName $ProjectName -sqlFile $f -logPath $log -dbName "foxproflow"
+        if ($r.code -ne 0) { throw "migrate sql_dirs failed on $name (exit=$($r.code))" }
+      }
+    }
+  }
+  elseif ($MigrateMode -eq "custom") {
+    Step "migrate_custom" 3 {
+      if (-not $MigrateScript) { throw "MigrateMode=custom requires -MigrateScript" }
+      if (-not (Test-Path -LiteralPath $MigrateScript)) { throw "MigrateScript not found: $MigrateScript" }
+
+      $log = Join-Path $evidenceDir "migrate_custom.log"
+      $p = Get-ScriptParamNames $MigrateScript
+
+      $argsList = New-Object System.Collections.Generic.List[string]
+      if ($p -contains "ComposeFile") { $argsList.AddRange([string[]]@("-ComposeFile",$ComposeFile)) | Out-Null }
+      if ($p -contains "ProjectName") { $argsList.AddRange([string[]]@("-ProjectName",$ProjectName)) | Out-Null }
+      if ($p -contains "Apply") { $argsList.Add("-Apply") | Out-Null }
+
+      $r = Run-PwshScript -ScriptPath $MigrateScript -Args ([string[]]$argsList.ToArray()) -LogPath $log
+      if ($r.code -ne 0) { throw "migrate custom failed (exit=$($r.code))" }
+    }
+  }
+  else {
+    throw "Invalid MigrateMode: $MigrateMode"
   }
 
   if ($VerifyDbContract -or $VerifyDbContractPlus) {
@@ -836,7 +1206,10 @@ try {
       $preferred = @("postgres","redis","osrm","api","worker","beat")
       $servicesToUp = Select-ExistingServices -allServices $composeServices -preferred $preferred
 
-      $d = Dc -composeFile $ComposeFile -projectName $ProjectName -composeArgs (@("up","-d","--remove-orphans") + $servicesToUp)
+      $upArgs = @("up","-d","--remove-orphans")
+      if ($NoBuild) { $upArgs += @("--no-build") }
+
+      $d = Dc -composeFile $ComposeFile -projectName $ProjectName -composeArgs ($upArgs + $servicesToUp)
       Set-Utf8 (Join-Path $evidenceDir "deploy.log") ("argv={0}`n`n{1}`nexit_code={2}`n" -f $d.argv, $d.out, $d.code)
       if ($d.code -ne 0) { throw "deploy failed (exit=$($d.code))" }
 
@@ -851,7 +1224,7 @@ try {
     $steps.Add([pscustomobject]@{ name="wait_api"; ok=$true; skipped=$true; ts=Now-Iso }) | Out-Null
   } else {
     Step "wait_api" 6 {
-      Wait-ApiReady -baseUrl $BaseUrl -timeoutSec $WaitApiTimeoutSec -pollSec $WaitApiPollSec -evidenceDir $evidenceDir | Out-Null
+      Wait-ApiReady -baseUrl $BaseUrl -healthPath $HealthPath -timeoutSec $WaitApiTimeoutSec -pollSec $WaitApiPollSec -evidenceDir $evidenceDir | Out-Null
     }
   }
 
@@ -862,27 +1235,11 @@ try {
     if ($NoSmoke) { Write-Warn "NoSmoke: skipping worker tasks smoke" } else { Write-Warn "SkipWorkerTasksSmoke: skipping worker tasks smoke" }
   } else {
     Step "worker_tasks_smoke" 11 {
-      $ws = Join-Path $PSScriptRoot "ff-worker-critical-tasks-smoke.ps1"
-      if (-not (Test-Path -LiteralPath $ws)) { throw "Missing worker smoke script: $ws" }
-      $workerSmoke.script = $ws
       $workerSmoke.skipped = $false
-
-      $wsDir = Join-Path $evidenceDir "worker_tasks_smoke"
-      Ensure-Dir $wsDir
-      $workerSmoke.evidence_dir = $wsDir
-
-      $argList = [string[]]@(
-        "-ReleaseId", ("worker_smoke_" + $evSuffix),
-        "-ComposeFile", $ComposeFile,
-        "-ProjectName", $ProjectName,
-        "-EvidenceDir", $wsDir
-      )
-
-      $log = Join-Path $wsDir "worker_smoke.log"
-      $r = Run-PwshScript -ScriptPath $ws -Args $argList -LogPath $log
-      if ($r.code -ne 0) { throw "worker tasks smoke failed (exit=$($r.code)). See: $log" }
-
+      $res = Invoke-WorkerTasksSmoke -composeFile $ComposeFile -projectName $ProjectName -evidenceDir $evidenceDir -evSuffix $evSuffix
       $workerSmoke.ok = $true
+      $workerSmoke.script = $res.script
+      $workerSmoke.evidence_dir = $res.evidence_dir
       Write-Ok "Worker tasks smoke PASS"
     }
   }
@@ -922,6 +1279,7 @@ try {
         release_id = $ReleaseId
         pre_sha = $preSha
         base_url = $BaseUrl
+        health_path = $HealthPath
         repo_root = $repoRoot
         compose_file = $ComposeFile
         project_name = $ProjectName
@@ -951,18 +1309,25 @@ try {
     ok = [bool]$ok
     exit_code = [int]$exitCode
     fail_reason = [string]$failReason
+
     base_url = $BaseUrl
+    health_path = $HealthPath
     compose_file = $ComposeFile
     project_name = $ProjectName
+
     migrate_mode = $MigrateMode
     backup_dir = $backupOutDir
     rollback_image_tag = $rollbackImageTag
+
+    flowsec_secrets_scan = [pscustomobject]$flowsec
     fresh_db_drill = [pscustomobject]$freshDrill
     worker_tasks_smoke = [pscustomobject]$workerSmoke
+
     verify = [pscustomobject]@{
       db_contract = [bool]($VerifyDbContract -or $VerifyDbContractPlus)
       db_contract_plus = [bool]$VerifyDbContractPlus
     }
+
     git_pre  = $gitPre
     git_post = $gitPost
     steps = $stepsArray
@@ -970,7 +1335,7 @@ try {
   }
 
   try {
-    $summaryJson = ($summary | ConvertTo-Json -Depth 95)
+    $summaryJson = ($summary | ConvertTo-Json -Depth 120)
     Set-Utf8 (Join-Path $evidenceDir "release_m0_summary.json") $summaryJson
     Set-Utf8 (Join-Path $evidenceDir "summary.json") $summaryJson
   } catch { }
@@ -984,6 +1349,7 @@ try {
         release_id = $ReleaseId
         evidence_dir = $evidenceDir
         base_url = $BaseUrl
+        health_path = $HealthPath
         compose_file = $ComposeFile
         project_name = $ProjectName
         rollback_image_tag = $rollbackImageTag
