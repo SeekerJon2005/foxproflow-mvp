@@ -1,12 +1,18 @@
 #requires -Version 7.0
 <#
-FoxProFlow • Security Lane • Outreach Composer (evidence-first) v1.1
+FoxProFlow • Security Lane • Outreach Composer (evidence-first) v1.2
 file: scripts/pwsh/sec/ff-sec-outreach-compose.ps1
 
 v1.1:
   - Remove internal ops/_local paths from EMAIL output (keep in JSON/meta only)
   - Add CTA with 2 suggested time slots
   - Add -BatchCsv for mass generation
+
+v1.2:
+  - Replace pilot -> пилот (subjects + email)
+  - Replace evidence pack -> пакет доказательств (subjects + email)
+  - Add 1-line "Итог пилота" after deliverables (short + full)
+  - Make call opener phrasing more Russian (no "evidence pack:")
 
 Goal:
   Generate ready-to-send outreach materials (email subjects + bodies + call script + checklist)
@@ -24,7 +30,7 @@ Usage (single):
 
 Usage (batch):
   pwsh -NoProfile -File .\scripts\pwsh\sec\ff-sec-outreach-compose.ps1 `
-    -BatchCsv ".\ops\_local\in\outreach_targets.csv" -OpenFolder
+    -BatchCsv ".\ops\_local\in\outreach_targets.csv"
 
 CSV columns (header required):
   company,segment,contact_name,contact_role,depth
@@ -96,21 +102,21 @@ function GreetingLine([string]$name) {
 
 function Segment-Profile([string]$seg) {
   switch ($seg) {
-    "marketplace" { return [pscustomobject]@{ label="Маркетплейс / e-commerce"; why_now="высокая цена простоя, быстрые релизы, много интеграций и дрейф правил"; focus="безопасность изменений + раннее предупреждение дрейфа/аномалий"; proof="evidence pack: surface/policy/watchlist/drill/coverage" } }
-    "bank"        { return [pscustomobject]@{ label="Банк / финтех";            why_now="регуляторка и аудит, высокая токсичность ошибок, контроль изменений и доказуемость решений"; focus="доказуемый контроль опасных действий (policy gates) + иммунитет деградаций"; proof="повторяемые артефакты для внутреннего аудита (без доступа к ядру)" } }
+    "marketplace" { return [pscustomobject]@{ label="Маркетплейс / e-commerce"; why_now="высокая цена простоя, быстрые релизы, много интеграций и дрейф правил"; focus="безопасность изменений + раннее предупреждение дрейфа/аномалий"; proof="surface/policy/watchlist/drill/coverage" } }
+    "bank"        { return [pscustomobject]@{ label="Банк / финтех";            why_now="регуляторка и аудит, высокая токсичность ошибок, контроль изменений и доказуемость решений"; focus="доказуемый контроль опасных действий (policy gates) + иммунитет деградаций"; proof="повторяемые артефакты для внутреннего аудита" } }
     "ecosystem"   { return [pscustomobject]@{ label="Экосистема / платформа";   why_now="много команд и продуктов => дрейф практик, рост инцидентов на стыках"; focus="унификация policy plane и иммунитет сигналов для SRE/Platform/Sec"; proof="one-click gate + baseline метрики до/после" } }
     "saas"        { return [pscustomobject]@{ label="B2B SaaS";                 why_now="SLA и удержание: цена деградации и инцидентов растёт вместе с клиентами"; focus="контроль изменений и раннее предупреждение без торможения релизов"; proof="drill + coverage как регулярный отчёт" } }
     "logistics"   { return [pscustomobject]@{ label="Логистика / TMS / 3PL";    why_now="сложные цепочки, много сторонних систем, критичность ошибок в исполнении"; focus="policy на опасные операции (confirm/apply/autofix) + иммунитет на дрейф"; proof="срез поверхности + план enable-enforce по whitelist" } }
-    default       { return [pscustomobject]@{ label="Custom";                  why_now="рост сложности и цены ошибок"; focus="advisory-first безопасность изменений + evidence"; proof="one-click gate" } }
+    default       { return [pscustomobject]@{ label="Custom";                  why_now="рост сложности и цены ошибок"; focus="advisory-first безопасность изменений + доказуемость"; proof="one-click gate" } }
   }
 }
 
 function Build-Subjects([string]$company, [pscustomobject]$prof) {
   $c = $company.Trim()
   return @(
-    ("{0}: pilot по безопасности изменений (advisory-first) + evidence pack" -f $c),
+    ("{0}: пилот по безопасности изменений (advisory-first) + пакет доказательств" -f $c),
     ("{0}: раннее предупреждение инцидентов и контроль опасных действий (без блокировок)" -f $c),
-    ("{0}: 2-недельный read-only pilot безопасности изменений (surface/policy/immune)" -f $c)
+    ("{0}: 2-недельный read-only пилот безопасности изменений (surface/policy/immune)" -f $c)
   )
 }
 
@@ -121,6 +127,10 @@ function Build-Cta([string]$slot1, [string]$slot2, [string]$tz) {
   return ("Если откликается — удобно созвониться 20 минут: {0} или {1} ({2})?" -f $s1, $s2, $t)
 }
 
+function PilotOutcomeLine() {
+  return "Итог пилота: карта P0/P1 + baseline по дрейфу/инцидентам + план whitelist-enforce (опционально)."
+}
+
 function Build-EmailShort([string]$company, [pscustomobject]$prof, [string]$contactName, [string]$contactRole, [string]$ctaLine) {
   $greet = GreetingLine $contactName
   $roleLine = ""
@@ -129,13 +139,14 @@ function Build-EmailShort([string]$company, [pscustomobject]$prof, [string]$cont
   $lines = New-Object System.Collections.Generic.List[string]
   $lines.Add($greet) | Out-Null
   $lines.Add("") | Out-Null
-  $lines.Add(("Я — Евгений Яцков, FoxProFlow. Предлагаю 2-недельный pilot по безопасности изменений в режиме advisory-first (read-only): без блокировок по умолчанию и без доступа к вашему ядру. {0}" -f $roleLine).Trim()) | Out-Null
+  $lines.Add(("Я — Евгений Яцков, FoxProFlow. Предлагаю 2-недельный пилот по безопасности изменений в режиме advisory-first (read-only): без блокировок по умолчанию и без доступа к вашему ядру. {0}" -f $roleLine).Trim()) | Out-Null
   $lines.Add("") | Out-Null
   $lines.Add("Что вы получаете на выходе:") | Out-Null
   $lines.Add("- инвентарь поверхности и P0/P1 опасных действий (surface map);") | Out-Null
   $lines.Add("- action/policy карта гейтов (whitelist-подход);") | Out-Null
   $lines.Add("- immune-watchlist сигналов (deny/5xx/backlog/health) + пороги;") | Out-Null
-  $lines.Add("- one-click evidence pack (повторяемые артефакты для руководства/аудита).") | Out-Null
+  $lines.Add("- one-click пакет доказательств (повторяемые артефакты для руководства/аудита).") | Out-Null
+  $lines.Add((PilotOutcomeLine)) | Out-Null
   $lines.Add("") | Out-Null
   $lines.Add(("Почему актуально для {0}: {1}." -f $company.Trim(), $prof.why_now)) | Out-Null
   $lines.Add("") | Out-Null
@@ -166,13 +177,14 @@ function Build-EmailFull([string]$company, [pscustomobject]$prof, [string]$conta
   $lines.Add("Формат пилота (2 недели, read-only):") | Out-Null
   $lines.Add("- enforce выключен: ничего не блокируем по умолчанию;") | Out-Null
   $lines.Add("- не нужен доступ к коду/ядру; работаем поверх наблюдаемости/выгрузок;") | Out-Null
-  $lines.Add("- на выходе — evidence pack и план whitelist-enforce (опционально).") | Out-Null
+  $lines.Add("- на выходе — пакет доказательств и план whitelist-enforce (опционально).") | Out-Null
   $lines.Add("") | Out-Null
   $lines.Add("Deliverables:") | Out-Null
   $lines.Add("1) Surface map: поверхность + приоритет P0/P1.") | Out-Null
   $lines.Add("2) Policy map: action/policy имена и гейт-контуры.") | Out-Null
   $lines.Add("3) Immune watchlist: deny/5xx/backlog/health + пороги WARN/CRIT.") | Out-Null
-  $lines.Add("4) One-click gate: прогон с evidence и coverage score.") | Out-Null
+  $lines.Add("4) One-click gate: прогон с доказательствами и coverage score.") | Out-Null
+  $lines.Add((PilotOutcomeLine)) | Out-Null
   $lines.Add("") | Out-Null
   $lines.Add("Что нужно от вас (минимально):") | Out-Null
   $lines.Add("- 2–5 критичных контуров/сервисов;") | Out-Null
@@ -189,7 +201,7 @@ function Build-EmailFull([string]$company, [pscustomobject]$prof, [string]$conta
 }
 
 function Build-CallOpener([string]$company, [pscustomobject]$prof) {
-  return ("20 секунд: Мы предлагаем {0} для {1}: {2}. Формат безопасный: advisory-first, без блокировок, с evidence-пакетом." -f $prof.focus, $company.Trim(), $prof.proof)
+  return ("20 секунд: Мы предлагаем {0} для {1}. На выходе: {2}. Формат безопасный: advisory-first, без блокировок, с пакетом доказательств." -f $prof.focus, $company.Trim(), $prof.proof)
 }
 
 function Build-CallScript([string]$company) {
@@ -197,7 +209,7 @@ function Build-CallScript([string]$company) {
     "0:00–0:20 — Контекст: «мы про безопасность изменений и раннее предупреждение».",
     "0:20–1:20 — Почему сейчас: цена простоя/ошибок растёт, интеграций больше, дрейф правил ускоряется.",
     "1:20–2:20 — Формат пилота: advisory-first, read-only, без доступа к ядру, без enforce по умолчанию.",
-    "2:20–3:20 — Deliverables: surface/policy/watchlist + one-click gate + evidence + coverage.",
+    "2:20–3:20 — Deliverables: surface/policy/watchlist + one-click gate + доказательства + coverage.",
     "3:20–4:20 — Что нужно от {0}: 2–5 критичных контуров + read-only наблюдаемость/выгрузки + контакт SRE/Platform.",
     "4:20–5:00 — Next step: whitelist-enforce в окна обслуживания (опционально)."
   )
@@ -360,7 +372,6 @@ if (-not [string]::IsNullOrWhiteSpace($BatchCsv)) {
     -CtaSlot1 $CtaSlot1 -CtaSlot2 $CtaSlot2 -CtaTz $CtaTz)
 }
 
-# Print last result
 $last = $results | Select-Object -Last 1
 Write-Host "[OUTREACH COMPOSE] OK" -ForegroundColor Green
 Write-Host ("evidence: {0}" -f $last.evidence_dir)
@@ -369,3 +380,4 @@ Write-Host ("md: {0}" -f $last.md)
 if ($OpenFolder -and $last.evidence_dir) {
   explorer.exe $last.evidence_dir | Out-Null
 }
+
