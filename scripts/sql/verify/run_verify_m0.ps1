@@ -13,6 +13,12 @@ Notes on include expansion:
   - \ir <path> is resolved relative to the directory of the including file (psql semantics).
   - \i  <path> is resolved relative to the current working directory (psql semantics).
   - Cycles are detected (include recursion stack).
+
+DB selection (Gate/FreshDB):
+  - By default PgDb = "foxproflow"
+  - If env:FF_TEMP_DB is set (FreshDB drill), it overrides PgDb ALWAYS,
+    even if -PgDb was passed explicitly (unless IgnoreTempDbEnv switch or env:FF_VERIFY_IGNORE_FF_TEMP_DB=true).
+  - If env:FF_PG_DB is set, it overrides PgDb when FF_TEMP_DB is not set.
 #>
 
 [CmdletBinding()]
@@ -35,7 +41,13 @@ param(
   [string]$VerifyFile = (Join-Path -Path (Split-Path -Parent $PSCommandPath) -ChildPath "verify_m0.sql"),
 
   # Disable host-side expansion of \i/\ir (rarely needed; mainly for debugging)
-  [switch]$NoExpandIncludes
+  [switch]$NoExpandIncludes,
+
+  # Local override: do NOT allow FF_TEMP_DB to override PgDb (rare)
+  [switch]$IgnoreTempDbEnv,
+
+  # Optional: print env diagnostics (FF_TEMP_DB/FF_PG_DB/ignore flag)
+  [switch]$PrintEnv
 )
 
 Set-StrictMode -Version Latest
@@ -43,6 +55,23 @@ $ErrorActionPreference = "Stop"
 
 # --- preflight ---
 $null = Get-Command docker -ErrorAction Stop
+
+function _GetEnv {
+  param([Parameter(Mandatory=$true)][string]$Name)
+  try {
+    return [Environment]::GetEnvironmentVariable($Name, "Process")
+  } catch {
+    return $null
+  }
+}
+
+function _EnvBool {
+  param([Parameter(Mandatory=$true)][string]$Name, [bool]$Default=$false)
+  $v = _GetEnv -Name $Name
+  if (-not $v) { return $Default }
+  $s = $v.ToString().Trim().ToLowerInvariant()
+  return $s -in @("1","true","yes","y","on","enable","enabled")
+}
 
 function Normalize-PathSeparators {
   param([Parameter(Mandatory=$true)][string]$Path)
@@ -87,7 +116,6 @@ function Get-ExpandedPsqlLines {
     $t = $line.TrimStart()
 
     # Expand psql meta includes on host side: \i / \ir
-    # Syntax: \i <file> or \ir <file>
     if ($t -match '^(\\i)(r)?\s+(.+)$') {
       $isRelative = [bool]$Matches[2]      # 'r' present => \ir
       $argRaw = $Matches[3].Trim()
@@ -128,9 +156,7 @@ function Get-ExpandedPsqlLines {
     $out.Add($line)
   }
 
-  # pop recursion stack
   $null = $IncludeStack.Remove($full)
-
   return ,$out.ToArray()
 }
 
@@ -139,24 +165,58 @@ function Get-ExpandedPsqlText {
   param([Parameter(Mandatory=$true)][string]$Path)
 
   $lines = Get-ExpandedPsqlLines -Path $Path
-  $text = $lines -join "`n"
-  return $text
+  return ($lines -join "`n")
 }
 
+# -----------------------------
 # Resolve PreferProject logic
+# -----------------------------
 $preferExplicit = $PSBoundParameters.ContainsKey('PreferProject')
 
 if (-not $PreferProject -or $PreferProject.Trim() -eq "") {
-  $PreferProject = $env:FF_COMPOSE_PROJECT
+  $PreferProject = _GetEnv -Name "FF_COMPOSE_PROJECT"
 }
 if (-not $PreferProject -or $PreferProject.Trim() -eq "") {
   $PreferProject = "foxproflow-mvp20"
 }
 
-# Normalize + resolve VerifyFile early (better diagnostics)
+# -----------------------------
+# Resolve + normalize VerifyFile
+# -----------------------------
 $VerifyFile = Resolve-NormalizedPath -Path $VerifyFile
 
+# -----------------------------
+# PgDb selection (IMPORTANT)
+# -----------------------------
+$pgDbWasBound = $PSBoundParameters.ContainsKey('PgDb')
+$pgDbSource = if ($pgDbWasBound) { "param" } else { "default" }
+
+$ignoreTemp = $IgnoreTempDbEnv.IsPresent -or (_EnvBool -Name "FF_VERIFY_IGNORE_FF_TEMP_DB" -Default:$false)
+
+$ffTempDb = _GetEnv -Name "FF_TEMP_DB"
+$ffPgDb   = _GetEnv -Name "FF_PG_DB"
+
+if ($PrintEnv.IsPresent) {
+  Write-Host "Env diagnostics:"
+  Write-Host "  FF_TEMP_DB = $ffTempDb"
+  Write-Host "  FF_PG_DB   = $ffPgDb"
+  Write-Host "  IgnoreTemp = $ignoreTemp"
+}
+
+if (-not $ignoreTemp -and $ffTempDb -and $ffTempDb.Trim() -ne "") {
+  $old = $PgDb
+  $PgDb = $ffTempDb.Trim()
+  $pgDbSource = if ($pgDbWasBound) { "env:FF_TEMP_DB(overrode param '$old')" } else { "env:FF_TEMP_DB" }
+}
+elseif ($ffPgDb -and $ffPgDb.Trim() -ne "") {
+  $old = $PgDb
+  $PgDb = $ffPgDb.Trim()
+  $pgDbSource = if ($pgDbWasBound) { "env:FF_PG_DB(overrode param '$old')" } else { "env:FF_PG_DB" }
+}
+
+# -----------------------------
 # Load verify text (with include expansion by default)
+# -----------------------------
 $verifyText =
   if ($NoExpandIncludes) {
     Get-Content -LiteralPath $VerifyFile -Raw
@@ -196,11 +256,9 @@ function Get-PostgresContainerName {
   if ($candidates.Count -gt 0) {
     Write-Verbose ("Compose postgres candidates: " + ($candidates | ForEach-Object { "$($_.Name)[$($_.Project)]" } | Sort-Object | Out-String).Trim())
 
-    # 1) Exact project match (best)
     $exact = $candidates | Where-Object { $_.Project -eq $PreferProjectName } | Select-Object -First 1
     if ($exact) { return $exact.Name }
 
-    # If user explicitly asked for a project, missing match should be fatal (unless override)
     if ($PreferWasExplicit -and -not $AllowMismatch) {
       $names = $candidates | ForEach-Object { "$($_.Name)[$($_.Project)]" } | Sort-Object
       throw ("PreferProject='$PreferProjectName' was requested, but no matching compose postgres container found. " +
@@ -208,23 +266,19 @@ function Get-PostgresContainerName {
              "Start the correct stack, or pass -PgContainer explicitly, or add -AllowProjectMismatch to override.")
     }
 
-    # 2) If only one compose postgres exists, take it
     if ($candidates.Count -eq 1) { return $candidates[0].Name }
 
-    # 3) Ambiguous: take first but warn loudly
     $names2 = $candidates | ForEach-Object { "$($_.Name)[$($_.Project)]" } | Sort-Object
     Write-Warning ("Multiple compose postgres containers found; none match PreferProject='$PreferProjectName'. " +
                    "Picking the first. Candidates: " + ($names2 -join ", "))
     return ($candidates | Select-Object -First 1).Name
   }
 
-  # No compose-labeled postgres found
   if ($PreferWasExplicit -and -not $AllowMismatch) {
     throw ("PreferProject='$PreferProjectName' was requested, but no compose-labeled postgres containers were found. " +
            "Cannot safely choose a target. Start the stack or pass -PgContainer explicitly (or add -AllowProjectMismatch).")
   }
 
-  # Fallback: any running container from postgres image
   $byImage = @(
     docker ps --filter "ancestor=postgres" --format "{{.Names}}"
   ) | Where-Object { $_ -and $_.Trim() } | Select-Object -Unique
@@ -235,8 +289,7 @@ function Get-PostgresContainerName {
   }
 
   if ($byImage.Count -gt 1) {
-    Write-Warning ("Multiple postgres-image containers found (no compose labels). " +
-                   "Picking the first: " + ($byImage -join ", "))
+    Write-Warning ("Multiple postgres-image containers found (no compose labels). Picking the first: " + ($byImage -join ", "))
   }
 
   return $byImage[0]
@@ -266,6 +319,7 @@ Write-Host "  PgContainer: $PgContainer"
 Write-Host "  PreferProject: $PreferProject"
 Write-Host "  PgUser:      $PgUser"
 Write-Host "  PgDb:        $PgDb"
+Write-Host "  PgDbSource:  $pgDbSource"
 Write-Host "  VerifyFile:  $VerifyFile"
 Write-Host "  ExpandIncludes: $(-not $NoExpandIncludes)"
 
