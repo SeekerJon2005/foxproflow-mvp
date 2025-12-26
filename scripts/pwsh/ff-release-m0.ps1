@@ -15,6 +15,7 @@ Goal:
   (optional) verify (suites) ->
   (optional) deploy ->
   (optional) wait_api ->
+  (optional) worker_tasks_smoke ->
   (optional) smoke ->
   evidence -> LKG (+ rollback story)
 
@@ -62,6 +63,9 @@ param(
   [switch]$KeepFreshDbDrillDb,
   [string]$FreshDbSqlWorktree = "",
 
+  # Worker critical tasks smoke (celery inspect registered)
+  [switch]$SkipWorkerTasksSmoke,
+
   [switch]$NoBackup,
   [switch]$NoBuild,
   [switch]$NoDeploy,
@@ -73,7 +77,7 @@ param(
 )
 
 # NOTE: DO NOT place any executable statements before [CmdletBinding]/param.
-$VERSION = "2025-12-26.det.v13"
+$VERSION = "2025-12-26.det.v14"
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -232,6 +236,7 @@ function Write-RollbackStory([string]$path, [hashtable]$ctx) {
   if ($ctx.compose_file) { $dc += " -f `"$($ctx.compose_file)`"" }
   if ($ctx.project_name) { $dc += " -p $($ctx.project_name)" }
   $t += ("3) {0} up -d --build api worker beat" -f $dc)
+
   $t += ("4) curl.exe -4 --http1.1 --noproxy 127.0.0.1 `"{0}/health/extended`"" -f $ctx.base_url)
   $t += ""
   Set-Utf8 $path ($t -join "`n")
@@ -307,16 +312,98 @@ function Run-PwshScript(
   if (-not (Test-Path -LiteralPath $ScriptPath)) { throw "Script not found: $ScriptPath" }
   $pwshExe = Get-PwshExe
 
-  $safeArgs = @()
-  if ($null -ne $ScriptArgs) { $safeArgs = [string[]]$ScriptArgs }
+  $safe = @()
+  if ($null -ne $ScriptArgs) { $safe = [string[]]$ScriptArgs }
 
-  $argv = @("-NoProfile","-ExecutionPolicy","Bypass","-File",$ScriptPath) + $safeArgs
+  $argv = @("-NoProfile","-ExecutionPolicy","Bypass","-File",$ScriptPath) + $safe
   $out = & $pwshExe @argv 2>&1
   $code = $LASTEXITCODE
 
   if ($LogPath) {
     $text = ("argv={0}`n`n{1}`nexit_code={2}`n" -f ("$pwshExe " + ($argv -join " ")), ($out | Out-String), $code)
     if ($AppendLog) { Add-Utf8 $LogPath $text } else { Set-Utf8 $LogPath $text }
+  }
+
+  return [pscustomobject]@{ code=$code; out=($out|Out-String) }
+}
+
+# --- psql include expansion (\i/\ir) for SQL apply ---
+function Try-ParsePsqlInclude([string]$line) {
+  $m = [regex]::Match($line, '^\s*\\i(r)?\s+(.+?)\s*$')
+  if (-not $m.Success) { return $null }
+
+  $p = $m.Groups[2].Value.Trim()
+  $p = ($p -replace '\s+--.*$', '').Trim()
+  if (($p.StartsWith('"') -and $p.EndsWith('"')) -or ($p.StartsWith("'") -and $p.EndsWith("'"))) {
+    if ($p.Length -ge 2) { $p = $p.Substring(1, $p.Length - 2) }
+  }
+  if ([string]::IsNullOrWhiteSpace($p)) { return $null }
+  return $p
+}
+
+function Expand-PsqlIncludes([string]$sqlFile, [hashtable]$seen = $null) {
+  if (-not $seen) { $seen = @{} }
+  if (-not (Test-Path -LiteralPath $sqlFile)) { throw "SQL file not found: $sqlFile" }
+
+  $full = (Resolve-Path -LiteralPath $sqlFile).Path
+  if ($seen.ContainsKey($full)) { return ("-- SKIP RECURSIVE INCLUDE: {0}`n" -f $full) }
+  $seen[$full] = $true
+
+  $baseDir = Split-Path $full -Parent
+  $sb = New-Object System.Text.StringBuilder
+  $lines = Get-Content -LiteralPath $full -Encoding UTF8
+
+  foreach ($line in $lines) {
+    $incRel = Try-ParsePsqlInclude $line
+    if ($incRel) {
+      $incPath = $incRel
+      if (-not [System.IO.Path]::IsPathRooted($incPath)) { $incPath = Join-Path $baseDir $incPath }
+      if (-not (Test-Path -LiteralPath $incPath)) {
+        throw ("psql include not found: {0} (resolved: {1}) referenced from {2}" -f $incRel, $incPath, $full)
+      }
+
+      $incFull = (Resolve-Path -LiteralPath $incPath).Path
+      [void]$sb.AppendLine(("-- BEGIN INCLUDE: {0} => {1}" -f $incRel, $incFull))
+      [void]$sb.Append((Expand-PsqlIncludes -sqlFile $incFull -seen $seen))
+      [void]$sb.AppendLine(("-- END INCLUDE: {0}" -f $incRel))
+      continue
+    }
+    [void]$sb.AppendLine($line)
+  }
+
+  return $sb.ToString()
+}
+
+function Invoke-PsqlSqlFile(
+  [string]$composeFile,
+  [string]$projectName,
+  [string]$sqlFile,
+  [string]$logPath,
+  [string]$dbName = "foxproflow"
+) {
+  if (-not (Test-Path -LiteralPath $sqlFile)) { throw "SQL file not found: $sqlFile" }
+
+  $raw = Get-Content -Raw -Encoding UTF8 $sqlFile
+  $needsExpand = ($raw -match '(?m)^\s*\\i(r)?\s+')
+  $sql = if ($needsExpand) { Expand-PsqlIncludes -sqlFile $sqlFile -seen @{} } else { $raw }
+
+  $dcArgv = @(
+    "compose","--ansi","never","-f",$composeFile,"-p",$projectName,
+    "exec","-T","postgres",
+    "psql","-U","admin","-d",$dbName,"-X","-v","ON_ERROR_STOP=1","-f","-"
+  )
+
+  $out = $sql | & docker @dcArgv 2>&1
+  $code = $LASTEXITCODE
+
+  if ($logPath) {
+    $logDir = Split-Path $logPath -Parent
+    if ($needsExpand -and $logDir) {
+      $expandedName = "expanded_" + [System.IO.Path]::GetFileName($sqlFile)
+      Set-Utf8 (Join-Path $logDir $expandedName) $sql
+    }
+    Set-Utf8 $logPath ("=== APPLY/VERIFY SQL via STDIN ===`nfile={0}`nts={1}`ndb={2}`nargv=docker {3}`n`n{4}`nexit_code={5}`n" -f `
+      $sqlFile, (Now-Iso), $dbName, ($dcArgv -join " "), ($out | Out-String), $code)
   }
 
   return [pscustomobject]@{ code=$code; out=($out|Out-String) }
@@ -457,10 +544,14 @@ if ([string]::IsNullOrWhiteSpace($BackupDir)) { $BackupDir = Join-Path $repoRoot
 if ($ArchitectKey) { $env:FF_ARCHITECT_KEY = $ArchitectKey }
 $env:API_BASE = $BaseUrl
 
-# evidence naming: avoid "release_m0_m0_<stamp>" when ReleaseId already has "m0_" prefix
+# evidence naming
 $evSuffix = $ReleaseId
 if ($ReleaseId -like "m0_*") { $evSuffix = ($ReleaseId -replace '^m0_', '') }
-$evName = ($ReleaseId -like "release_m0_*") ? $ReleaseId : ("release_m0_" + $evSuffix)
+
+$evName = $ReleaseId
+if ($ReleaseId -notlike "release_m0_*") {
+  $evName = ("release_m0_" + $evSuffix)
+}
 
 $evidenceDir = Join-Path $repoRoot ("ops\_local\evidence\{0}" -f $evName)
 Ensure-Dir $evidenceDir
@@ -485,10 +576,8 @@ $failReason = ""
 $ok = $true
 $composeServices = @()
 
-# Fresh drill summary payload
-$freshDrill = [ordered]@{
-  skipped=$true; keep_db=$false; sql_worktree=$null; drill_script=$null; temp_db=$null; evidence_dir=$null; ok=$null
-}
+$freshDrill = [ordered]@{ skipped=$true; keep_db=[bool]$KeepFreshDbDrillDb; sql_worktree=$null; drill_script=$null; temp_db=$null; evidence_dir=$null; ok=$null }
+$workerSmoke = [ordered]@{ skipped=$true; ok=$null; script=$null; evidence_dir=$null }
 
 function Step([string]$name, [int]$failExitCode, [scriptblock]$fn) {
   $t0 = Now-Iso
@@ -521,6 +610,7 @@ Set-Utf8 (Join-Path $evidenceDir "release_meta.json") (
     skip_fresh_db_drill = [bool]$SkipFreshDbDrill
     keep_fresh_db_drill_db = [bool]$KeepFreshDbDrillDb
     fresh_db_sql_worktree = $FreshDbSqlWorktree
+    skip_worker_tasks_smoke = [bool]$SkipWorkerTasksSmoke
     no_backup = [bool]$NoBackup
     no_build  = [bool]$NoBuild
     no_deploy = [bool]$NoDeploy
@@ -566,23 +656,18 @@ try {
   Write-Step "FRESH DB DRILL (bootstrap_min)"
   if ($SkipFreshDbDrill) {
     $freshDrill.skipped = $true
-    $freshDrill.keep_db = [bool]$KeepFreshDbDrillDb
     $steps.Add([pscustomobject]@{ name="fresh_db_drill_bootstrap_min"; ok=$true; skipped=$true; ts=Now-Iso }) | Out-Null
     Write-Warn "SkipFreshDbDrill: skipping fresh DB drill"
   } else {
     Step "fresh_db_drill_bootstrap_min" 10 {
       $freshDrill.skipped = $false
-      $freshDrill.keep_db = [bool]$KeepFreshDbDrillDb
 
-      # IMPORTANT: call the local, known-good drill script by absolute path
-      $drill = Join-Path $PSScriptRoot "ff-fresh-db-drill.ps1"
+      $drill = Join-Path $PSScriptRoot "ff-drill-fresh-db-bootstrap-min.ps1"
       if (-not (Test-Path -LiteralPath $drill)) { throw "Missing drill script: $drill" }
       $freshDrill.drill_script = $drill
 
       $sqlWt = $FreshDbSqlWorktree
-      if ([string]::IsNullOrWhiteSpace($sqlWt)) {
-        $sqlWt = Resolve-SiblingWorktree -repoRoot $repoRoot -siblingName "C-sql"
-      }
+      if ([string]::IsNullOrWhiteSpace($sqlWt)) { $sqlWt = Resolve-SiblingWorktree -repoRoot $repoRoot -siblingName "C-sql" }
       if (-not $sqlWt) { throw "C-sql worktree not found near '$repoRoot'. Provide -FreshDbSqlWorktree explicitly." }
       $freshDrill.sql_worktree = $sqlWt
 
@@ -596,26 +681,32 @@ try {
       $freshDrill.evidence_dir = $drillDir
 
       $rand = Get-Random -Minimum 1000 -Maximum 9999
-      $tempDb = Sanitize-DbName ("ff_tmp_{0}_{1}" -f $evSuffix, $rand)
+      $tempDb = Sanitize-DbName ("tmp_gate_bootmin_{0}_{1}" -f $evSuffix, $rand)
       $freshDrill.temp_db = $tempDb
 
-      # Detect params supported by drill, but ALWAYS pass bootstrap/suite when possible to avoid prompts
-      $drillParams = Get-ScriptParamNames $drill
-      Set-Utf8 (Join-Path $drillDir "drill_params_detected.json") (($drillParams | ConvertTo-Json -Depth 10))
+      $p = Get-ScriptParamNames $drill
+      Set-Utf8 (Join-Path $drillDir "params_detected.json") (($p | ConvertTo-Json -Depth 10))
 
-      $args = New-Object System.Collections.Generic.List[string]
+      $argList = New-Object System.Collections.Generic.List[string]
 
-      if ($drillParams -contains "SqlWorktree") { $args.AddRange([string[]]@("-SqlWorktree",$sqlWt)) | Out-Null }
+      if ($p -contains "ComposeFile") { $argList.AddRange([string[]]@("-ComposeFile",$ComposeFile)) | Out-Null }
+      if ($p -contains "ProjectName") { $argList.AddRange([string[]]@("-ProjectName",$ProjectName)) | Out-Null }
 
-      # These two are the main anti-prompt guarantees:
-      if ($drillParams -contains "BootstrapSqlPath") { $args.AddRange([string[]]@("-BootstrapSqlPath",$bootstrapAbs)) | Out-Null }
-      if ($drillParams -contains "SuiteFile")        { $args.AddRange([string[]]@("-SuiteFile",$suiteAbs)) | Out-Null }
+      if ($p -contains "TempDbName") { $argList.AddRange([string[]]@("-TempDbName",$tempDb)) | Out-Null }
+      elseif ($p -contains "DbName") { $argList.AddRange([string[]]@("-DbName",$tempDb)) | Out-Null }
 
-      if ($drillParams -contains "ComposeFile")  { $args.AddRange([string[]]@("-ComposeFile",$ComposeFile)) | Out-Null }
-      if ($drillParams -contains "ProjectName")  { $args.AddRange([string[]]@("-ProjectName",$ProjectName)) | Out-Null }
-      if ($drillParams -contains "EvidenceDir")  { $args.AddRange([string[]]@("-EvidenceDir",$drillDir)) | Out-Null }
-      if ($drillParams -contains "DbName")       { $args.AddRange([string[]]@("-DbName",$tempDb)) | Out-Null }
-      if ($KeepFreshDbDrillDb -and ($drillParams -contains "KeepDb")) { $args.Add("-KeepDb") | Out-Null }
+      if ($p -contains "BootstrapSqlFile") { $argList.AddRange([string[]]@("-BootstrapSqlFile",$bootstrapAbs)) | Out-Null }
+      elseif ($p -contains "BootstrapSqlPath") { $argList.AddRange([string[]]@("-BootstrapSqlPath",$bootstrapAbs)) | Out-Null }
+
+      if ($p -contains "SuiteFile") { $argList.AddRange([string[]]@("-SuiteFile",$suiteAbs)) | Out-Null }
+
+      if ($p -contains "EvidenceDir") { $argList.AddRange([string[]]@("-EvidenceDir",$drillDir)) | Out-Null }
+      elseif ($p -contains "OutDir")  { $argList.AddRange([string[]]@("-OutDir",$drillDir)) | Out-Null }
+
+      if ($KeepFreshDbDrillDb) {
+        if ($p -contains "KeepTempDb") { $argList.Add("-KeepTempDb") | Out-Null }
+        elseif ($p -contains "KeepDb") { $argList.Add("-KeepDb") | Out-Null }
+      }
 
       Set-Utf8 (Join-Path $drillDir "drill_meta.json") (
         ([pscustomobject]@{
@@ -626,17 +717,13 @@ try {
           suite_abs = $suiteAbs
           temp_db = $tempDb
           keep_db = [bool]$KeepFreshDbDrillDb
-          args = $args.ToArray()
+          args = $argList.ToArray()
         } | ConvertTo-Json -Depth 40)
       )
 
-      $hostLog = Join-Path $drillDir "drill_host.log"
-      $r = Run-PwshScript -ScriptPath $drill -Args ([string[]]$args.ToArray()) -LogPath $hostLog
-      if ($r.code -ne 0) {
-        $tail = ""
-        try { $tail = (Get-Content -LiteralPath $hostLog -Tail 140 | Out-String) } catch { }
-        throw "Fresh DB drill failed (exit=$($r.code)). Tail:`n$tail"
-      }
+      $log = Join-Path $drillDir "drill.log"
+      $r = Run-PwshScript -ScriptPath $drill -Args ([string[]]$argList.ToArray()) -LogPath $log
+      if ($r.code -ne 0) { throw "Fresh DB drill failed (exit=$($r.code)). See: $log" }
 
       $freshDrill.ok = $true
       Write-Ok "Fresh DB drill PASS"
@@ -703,8 +790,9 @@ try {
     Write-Warn "MigrateMode=skip: skipping migrate"
     $steps.Add([pscustomobject]@{ name="migrate"; ok=$true; skipped=$true; ts=Now-Iso }) | Out-Null
   } else {
-    Write-Warn "MigrateMode '$MigrateMode' remains as in your previous implementation; integrate here if needed."
-    $steps.Add([pscustomobject]@{ name="migrate"; ok=$true; skipped=$true; note="not executed"; ts=Now-Iso }) | Out-Null
+    # keep your current migrate implementation here if needed (this template preserves existing modes outside)
+    Write-Warn "MigrateMode '$MigrateMode' must be implemented here as in your previous version."
+    $steps.Add([pscustomobject]@{ name="migrate"; ok=$true; skipped=$true; note="not executed in template"; ts=Now-Iso }) | Out-Null
   }
 
   if ($VerifyDbContract -or $VerifyDbContractPlus) {
@@ -764,6 +852,38 @@ try {
   } else {
     Step "wait_api" 6 {
       Wait-ApiReady -baseUrl $BaseUrl -timeoutSec $WaitApiTimeoutSec -pollSec $WaitApiPollSec -evidenceDir $evidenceDir | Out-Null
+    }
+  }
+
+  Write-Step "WORKER CRITICAL TASKS SMOKE"
+  if ($NoSmoke -or $SkipWorkerTasksSmoke) {
+    $workerSmoke.skipped = $true
+    $steps.Add([pscustomobject]@{ name="worker_tasks_smoke"; ok=$true; skipped=$true; ts=Now-Iso }) | Out-Null
+    if ($NoSmoke) { Write-Warn "NoSmoke: skipping worker tasks smoke" } else { Write-Warn "SkipWorkerTasksSmoke: skipping worker tasks smoke" }
+  } else {
+    Step "worker_tasks_smoke" 11 {
+      $ws = Join-Path $PSScriptRoot "ff-worker-critical-tasks-smoke.ps1"
+      if (-not (Test-Path -LiteralPath $ws)) { throw "Missing worker smoke script: $ws" }
+      $workerSmoke.script = $ws
+      $workerSmoke.skipped = $false
+
+      $wsDir = Join-Path $evidenceDir "worker_tasks_smoke"
+      Ensure-Dir $wsDir
+      $workerSmoke.evidence_dir = $wsDir
+
+      $argList = [string[]]@(
+        "-ReleaseId", ("worker_smoke_" + $evSuffix),
+        "-ComposeFile", $ComposeFile,
+        "-ProjectName", $ProjectName,
+        "-EvidenceDir", $wsDir
+      )
+
+      $log = Join-Path $wsDir "worker_smoke.log"
+      $r = Run-PwshScript -ScriptPath $ws -Args $argList -LogPath $log
+      if ($r.code -ne 0) { throw "worker tasks smoke failed (exit=$($r.code)). See: $log" }
+
+      $workerSmoke.ok = $true
+      Write-Ok "Worker tasks smoke PASS"
     }
   }
 
@@ -838,6 +958,7 @@ try {
     backup_dir = $backupOutDir
     rollback_image_tag = $rollbackImageTag
     fresh_db_drill = [pscustomobject]$freshDrill
+    worker_tasks_smoke = [pscustomobject]$workerSmoke
     verify = [pscustomobject]@{
       db_contract = [bool]($VerifyDbContract -or $VerifyDbContractPlus)
       db_contract_plus = [bool]$VerifyDbContractPlus
