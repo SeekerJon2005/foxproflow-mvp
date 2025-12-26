@@ -7,7 +7,10 @@ Procedure (reproducible):
   1) create temp DB
   2) apply scripts/sql/bootstrap_min_apply.sql (prefer C-sql worktree)
      NOTE: bootstrap may contain psql includes (\i/\ir). This script expands them on host (inline) before sending to container.
-  3) verify suite bootstrap_min (try run_verify_suite.ps1; fallback to direct suite apply into temp DB)
+  3) verify suite bootstrap_min:
+       - try run_verify_suite.ps1
+       - if verify runner fails -> fallback: apply suite items directly into temp DB
+     NOTE: verify runner uses relative paths; we run it from its repo root (C-sql) to make Resolve-Path stable.
   4) drop temp DB
 
 Outputs:
@@ -123,16 +126,12 @@ function Sanitize-TempDbName([string]$name) {
 # psql include expansion (\i/\ir)
 # -----------------------------
 function Try-ParsePsqlInclude([string]$line) {
-  # supports: \i file.sql, \ir file.sql (psql meta-commands)
   $m = [regex]::Match($line, '^\s*\\i(r)?\s+(.+?)\s*$')
   if (-not $m.Success) { return $null }
 
   $p = $m.Groups[2].Value.Trim()
-
-  # strip inline comments for unquoted paths
   $p = ($p -replace '\s+--.*$', '').Trim()
 
-  # strip quotes
   if (($p.StartsWith('"') -and $p.EndsWith('"')) -or ($p.StartsWith("'") -and $p.EndsWith("'"))) {
     if ($p.Length -ge 2) { $p = $p.Substring(1, $p.Length - 2) }
   }
@@ -184,7 +183,6 @@ function Expand-PsqlIncludes([string]$sqlFile, [hashtable]$seen = $null) {
 function Invoke-PsqlSqlFile([string]$composeFile, [string]$projectName, [string]$dbName, [string]$sqlFile, [string]$logPath) {
   if (-not (Test-Path -LiteralPath $sqlFile)) { throw "SQL file not found: $sqlFile" }
 
-  # Expand \i/\ir on host so psql inside container does not need host paths.
   $sqlText = Expand-PsqlIncludes -sqlFile $sqlFile -seen @{}
 
   $dcArgv = @(
@@ -232,9 +230,9 @@ function Invoke-PsqlStdin([string]$composeFile, [string]$projectName, [string]$d
 # verify suite helpers
 # -----------------------------
 function Resolve-SuiteSqlRoot([string]$suiteFile) {
-  $suiteDir  = Split-Path $suiteFile -Parent   # ...\scripts\sql\verify\suites
-  $verifyDir = Split-Path $suiteDir  -Parent   # ...\scripts\sql\verify
-  $sqlRoot   = Split-Path $verifyDir -Parent   # ...\scripts\sql
+  $suiteDir  = Split-Path $suiteFile -Parent
+  $verifyDir = Split-Path $suiteDir  -Parent
+  $sqlRoot   = Split-Path $verifyDir -Parent
   return $sqlRoot
 }
 
@@ -256,6 +254,15 @@ function Resolve-SuiteItem([string]$sqlRoot, [string]$line) {
   return $null
 }
 
+function Resolve-RunnerRepoRoot([string]$runnerPath, [string]$fallbackRepoRoot) {
+  try {
+    $runnerDir = Split-Path $runnerPath -Parent
+    $cand = (Resolve-Path (Join-Path $runnerDir "..\..\..")).Path
+    if (Test-Path -LiteralPath (Join-Path $cand "scripts\sql")) { return $cand }
+  } catch { }
+  return $fallbackRepoRoot
+}
+
 function Run-VerifySuite([string]$repoRoot, [string]$composeFile, [string]$projectName, [string]$dbName, [string]$suiteFile, [string]$evidenceDir) {
   $runner = if ($VerifyRunnerScript) { $VerifyRunnerScript } else { (Resolve-VerifyRunner -repoRoot $repoRoot) }
   if (-not (Test-Path -LiteralPath $runner)) { throw "Verify runner not found: $runner" }
@@ -264,7 +271,6 @@ function Run-VerifySuite([string]$repoRoot, [string]$composeFile, [string]$proje
   $pwshExe = Get-PwshExe
   $params = Get-ScriptParamNames $runner
 
-  # Set env for DB targeting (even if runner supports param, env is harmless)
   $env:PGDATABASE = $dbName
   $env:FF_DB_NAME = $dbName
 
@@ -279,16 +285,26 @@ function Run-VerifySuite([string]$repoRoot, [string]$composeFile, [string]$proje
   if ($params -contains "ProjectName") { $args.AddRange([string[]]@("-ProjectName", $projectName)) | Out-Null }
   elseif ($params -contains "Project") { $args.AddRange([string[]]@("-Project", $projectName)) | Out-Null }
 
-  # Optional explicit DB param (best effort)
   $dbParam = $null
   foreach ($cand in @("DbName","Database","DatabaseName","Db")) { if ($params -contains $cand) { $dbParam = $cand; break } }
   if ($dbParam) { $args.AddRange([string[]]@("-$dbParam", $dbName)) | Out-Null }
 
   $argv = @("-NoProfile","-ExecutionPolicy","Bypass","-File",$runner) + $args.ToArray()
-  $out = & $pwshExe @argv 2>&1
-  $code = $LASTEXITCODE
 
-  Set-Utf8 $log ("ts={0}`nrunner={1}`nargv={2}`n`n{3}`nexit_code={4}`n" -f (Now-Iso), $runner, ("$pwshExe " + ($argv -join " ")), ($out | Out-String), $code)
+  # IMPORTANT: run from verify runner repo root (C-sql) to make relative paths stable
+  $workDir = Resolve-RunnerRepoRoot -runnerPath $runner -fallbackRepoRoot $repoRoot
+
+  Push-Location $workDir
+  try {
+    $out = & $pwshExe @argv 2>&1
+    $code = $LASTEXITCODE
+  } finally {
+    Pop-Location
+  }
+
+  Set-Utf8 $log ("ts={0}`nrunner={1}`nworkdir={2}`nargv={3}`n`n{4}`nexit_code={5}`n" -f `
+    (Now-Iso), $runner, $workDir, ("$pwshExe " + ($argv -join " ")), ($out | Out-String), $code)
+
   if ($code -eq 0) { return $true }
 
   Write-Warn "verify runner failed — fallback: apply suite items directly into temp DB"
@@ -349,7 +365,6 @@ try {
   Write-Step "CREATE TEMP DB"
   $createLog = Join-Path $EvidenceDir "create_db.log"
 
-  # Idempotent create: terminate + drop if exists, then create
   $sqlCreate = @"
 SELECT pg_terminate_backend(pid)
 FROM pg_stat_activity
