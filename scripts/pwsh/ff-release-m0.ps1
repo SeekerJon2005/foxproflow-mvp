@@ -65,7 +65,7 @@ param(
 )
 
 # NOTE: DO NOT place any executable statements before [CmdletBinding]/param.
-$VERSION = "2025-12-26.det.v7"
+$VERSION = "2025-12-26.det.v8"
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -573,27 +573,26 @@ try {
       if ([string]::IsNullOrWhiteSpace($sqlWt)) {
         $sqlWt = Resolve-SiblingWorktree -repoRoot $repoRoot -siblingName "C-sql"
       }
-      if (-not $sqlWt) {
-        throw "C-sql worktree not found near '$repoRoot'. Provide -FreshDbSqlWorktree explicitly."
-      }
+      if (-not $sqlWt) { throw "C-sql worktree not found near '$repoRoot'. Provide -FreshDbSqlWorktree explicitly." }
 
       $bootstrapAbs = Join-Path $sqlWt "scripts\sql\bootstrap_min_apply.sql"
       $suiteAbs     = Join-Path $sqlWt "scripts\sql\verify\suites\bootstrap_min.txt"
       if (-not (Test-Path -LiteralPath $bootstrapAbs)) { throw "bootstrap_min_apply.sql not found: $bootstrapAbs" }
       if (-not (Test-Path -LiteralPath $suiteAbs))     { throw "bootstrap_min suite not found: $suiteAbs" }
 
-      # Non-interactive: discover drill params and pass only what exists.
-      $paramNames = @()
-      try { $paramNames = @((Get-Command $drill -ErrorAction Stop).Parameters.Keys) } catch { $paramNames = @() }
+      $paramNames = Get-ScriptParamNames $drill
       Set-Utf8 (Join-Path $evidenceDir "fresh_db_drill_params_detected.json") (($paramNames | ConvertTo-Json -Depth 10))
 
       $args = New-Object System.Collections.Generic.List[string]
+
+      # If parser failed, fall back to the known mandatory names that currently prompt in your environment.
+      $fallbackMode = ($paramNames.Count -eq 0)
 
       if ($paramNames -contains "SqlWorktree") {
         $args.Add("-SqlWorktree") | Out-Null; $args.Add($sqlWt) | Out-Null
       }
 
-      # Bootstrap path (support multiple spellings)
+      # Bootstrap param mapping (guarantee non-interactive)
       if ($paramNames -contains "BootstrapSqlPath") {
         $args.Add("-BootstrapSqlPath") | Out-Null; $args.Add($bootstrapAbs) | Out-Null
       } elseif ($paramNames -contains "BootstrapFile") {
@@ -602,16 +601,20 @@ try {
         $args.Add("-BootstrapPath") | Out-Null; $args.Add($bootstrapAbs) | Out-Null
       } elseif ($paramNames -contains "VerifyFile") {
         $args.Add("-VerifyFile") | Out-Null; $args.Add($bootstrapAbs) | Out-Null
+      } elseif ($fallbackMode) {
+        $args.Add("-BootstrapSqlPath") | Out-Null; $args.Add($bootstrapAbs) | Out-Null
       }
 
-      # Suite path
+      # Suite param mapping (guarantee non-interactive)
       if ($paramNames -contains "SuiteFile") {
         $args.Add("-SuiteFile") | Out-Null; $args.Add($suiteAbs) | Out-Null
       } elseif ($paramNames -contains "SuitePath") {
         $args.Add("-SuitePath") | Out-Null; $args.Add($suiteAbs) | Out-Null
+      } elseif ($fallbackMode) {
+        $args.Add("-SuiteFile") | Out-Null; $args.Add($suiteAbs) | Out-Null
       }
 
-      # Project hint
+      # Project hint (if supported)
       if ($paramNames -contains "PreferProject") {
         $args.Add("-PreferProject") | Out-Null; $args.Add($ProjectName) | Out-Null
       } elseif ($paramNames -contains "ProjectName") {
@@ -626,7 +629,6 @@ try {
 
       if ($KeepFreshDbDrillDb) {
         if ($paramNames -contains "KeepDb") { $args.Add("-KeepDb") | Out-Null }
-        elseif ($paramNames -contains "Keep") { $args.Add("-Keep") | Out-Null }
       }
 
       Set-Utf8 (Join-Path $evidenceDir "fresh_db_drill_meta.json") (
