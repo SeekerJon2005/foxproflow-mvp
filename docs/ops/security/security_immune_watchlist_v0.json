@@ -1,0 +1,153 @@
+{
+  "ts": "2025-12-26T05:51:53.305+03:00",
+  "source_policy_map": "C:\\Users\\Evgeniy\\projects\\foxproflow-wt\\A-run\\docs\\ops\\security\\security_policy_map_v0.json",
+  "hot_domains": [
+    {
+      "count": 10,
+      "domain": "devfactory"
+    },
+    {
+      "count": 3,
+      "domain": "devorders"
+    },
+    {
+      "count": 2,
+      "domain": "autoplan"
+    },
+    {
+      "count": 2,
+      "domain": "trips"
+    },
+    {
+      "count": 1,
+      "domain": "autoplan_legacy"
+    },
+    {
+      "count": 1,
+      "domain": "driver"
+    }
+  ],
+  "hot_actions": [
+    {
+      "count": 5,
+      "action": "devfactory.write"
+    },
+    {
+      "count": 3,
+      "action": "devfactory.autofix_admin"
+    },
+    {
+      "count": 3,
+      "action": "devorders.link_write"
+    },
+    {
+      "count": 2,
+      "action": "autoplan.apply"
+    },
+    {
+      "count": 2,
+      "action": "devfactory.read"
+    },
+    {
+      "count": 2,
+      "action": "trips.apply"
+    },
+    {
+      "count": 1,
+      "action": "autoplan_legacy.apply"
+    },
+    {
+      "count": 1,
+      "action": "driver.apply"
+    }
+  ],
+  "watchlist": [
+    {
+      "id": "IMM-001",
+      "prio": "P0",
+      "signal": "Policy deny spike on P0/P1 actions",
+      "why": "Рост deny по опасным действиям = дрейф ролей/ключей/политик или попытка обхода. Ранний индикатор инцидента.",
+      "threshold": "WARN: >=20 denies/10m (P0/P1); CRIT: >=100 denies/10m или рост x5",
+      "evidence": [
+        "api logs: 403 Forbidden на protected endpoints",
+        "ops/event_log (если есть): policy_deny/action/subject/ts",
+        "devfactory events: deny на autofix/admin"
+      ],
+      "scope_actions": [
+        "devfactory.write",
+        "devfactory.autofix_admin",
+        "devorders.link_write",
+        "autoplan.apply",
+        "devfactory.read",
+        "trips.apply",
+        "autoplan_legacy.apply",
+        "driver.apply"
+      ]
+    },
+    {
+      "id": "IMM-002",
+      "prio": "P0",
+      "signal": "Autofix enable/run attempts (denied or repeated)",
+      "why": "Autofix = опасная кнопка. Повторные попытки без разрешения — misconfig или злоупотребление.",
+      "threshold": "WARN: >=3 attempts/10m; CRIT: >=10 attempts/10m",
+      "evidence": [
+        "api: /api/devfactory/tasks/*/autofix/* (403/200)",
+        "devfactory autofix events (если включены)",
+        "audit trail: correlation_id + subject"
+      ],
+      "scope_actions": [
+        "devfactory.autofix_admin"
+      ]
+    },
+    {
+      "id": "IMM-003",
+      "prio": "P0",
+      "signal": "5xx spike on execution domains (autoplan/devfactory/devorders)",
+      "why": "Рост 5xx на контурах исполнения/коммерции = деградация и риск потери денег/доверия.",
+      "threshold": "WARN: 5xx_rate >=2%/10m; CRIT: >=5%/10m или 10+ подряд",
+      "evidence": [
+        "api logs: ERROR/Traceback frequency",
+        "health/extended latency + ready flags",
+        "celery task failures correlated"
+      ],
+      "scope_actions": [
+        "devfactory.write",
+        "devfactory.autofix_admin",
+        "devorders.link_write",
+        "autoplan.apply",
+        "devfactory.read"
+      ]
+    },
+    {
+      "id": "IMM-004",
+      "prio": "P1",
+      "signal": "Queue backlog / unregistered Celery tasks",
+      "why": "Unregistered tasks и рост очередей = скрытый отказ контуров.",
+      "threshold": "WARN: LLEN queue >100; CRIT: >1000 или Received unregistered task",
+      "evidence": [
+        "worker logs: Received unregistered task",
+        "redis-cli LLEN <queue>",
+        "celery inspect ping/registered"
+      ],
+      "scope_actions": [
+        "ops.queue_read",
+        "ops.health_read"
+      ]
+    },
+    {
+      "id": "IMM-005",
+      "prio": "P1",
+      "signal": "Health degradation (ready=false, latency spikes)",
+      "why": "Перед инцидентом часто растёт latency Postgres/Redis и ready=false.",
+      "threshold": "WARN: pg latency >50ms; CRIT: >200ms или ready=false",
+      "evidence": [
+        "GET /health/extended snapshots",
+        "docker compose ps + restarts",
+        "postgres logs: connection/lock issues"
+      ],
+      "scope_actions": [
+        "ops.health_read"
+      ]
+    }
+  ]
+}

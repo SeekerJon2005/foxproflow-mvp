@@ -1,0 +1,114 @@
+{
+  "ts": "2025-12-26T04:44:49.556+03:00",
+  "evidence_dir": "C:\\Users\\Evgeniy\\projects\\foxproflow-wt\\A-run\\ops\\_local\\evidence\\sec_preflight_20251226_043007",
+  "paths_count": 115,
+  "top_domains": [
+    {
+      "Count": 18,
+      "Name": "autoplan"
+    },
+    {
+      "Count": 16,
+      "Name": "devfactory"
+    },
+    {
+      "Count": 12,
+      "Name": "trips"
+    },
+    {
+      "Count": 8,
+      "Name": "devorders"
+    },
+    {
+      "Count": 7,
+      "Name": "driver"
+    },
+    {
+      "Count": 7,
+      "Name": "eri"
+    },
+    {
+      "Count": 6,
+      "Name": "crm"
+    },
+    {
+      "Count": 5,
+      "Name": "(root/other)"
+    },
+    {
+      "Count": 4,
+      "Name": "dispatcher"
+    },
+    {
+      "Count": 4,
+      "Name": "flowlang"
+    },
+    {
+      "Count": 4,
+      "Name": "flowworld"
+    },
+    {
+      "Count": 3,
+      "Name": "sales"
+    },
+    {
+      "Count": 3,
+      "Name": "routing"
+    },
+    {
+      "Count": 3,
+      "Name": "trucks"
+    },
+    {
+      "Count": 3,
+      "Name": "flowmind"
+    },
+    {
+      "Count": 3,
+      "Name": "onboarding"
+    },
+    {
+      "Count": 2,
+      "Name": "parsers"
+    },
+    {
+      "Count": 2,
+      "Name": "pipeline"
+    },
+    {
+      "Count": 2,
+      "Name": "autoplan_legacy"
+    },
+    {
+      "Count": 2,
+      "Name": "telemetry"
+    },
+    {
+      "Count": 1,
+      "Name": "flowmeta"
+    }
+  ],
+  "p0_candidates": [
+    "/api/autoplan_legacy/run",
+    "/api/autoplan/run",
+    "/api/autoplan/trips/{trip_id}/confirm",
+    "/api/devfactory/orders",
+    "/api/devfactory/orders/{dev_order_id}",
+    "/api/devfactory/orders/{dev_order_id}/tasks",
+    "/api/devfactory/orders/public/{dev_order_public_id}",
+    "/api/devfactory/orders/recent",
+    "/api/devfactory/tasks/{task_id}/autofix/disable",
+    "/api/devfactory/tasks/{task_id}/autofix/enable",
+    "/api/devfactory/tasks/{task_id}/autofix/kpi",
+    "/api/devfactory/tasks/{task_id}/autofix/run",
+    "/api/devfactory/tasks/intent",
+    "/api/devorders/{dev_order_id}/link/billing",
+    "/api/devorders/{dev_order_id}/link/lead",
+    "/api/devorders/{dev_order_id}/link/tenant",
+    "/api/driver/auth/confirm",
+    "/api/driver/auth/confirm_code",
+    "/api/trips/{trip_id}/confirm",
+    "/api/trips/autoplan/run/{run_id}",
+    "/api/trips/autoplan/runs"
+  ]
+}

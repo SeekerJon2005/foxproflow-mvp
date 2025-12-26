@@ -1,0 +1,1366 @@
+{
+  "ts": "2025-12-26T04:48:30.284+03:00",
+  "evidence_dir": "C:\\Users\\Evgeniy\\projects\\foxproflow-wt\\A-run\\ops\\_local\\evidence\\sec_preflight_20251226_043007",
+  "paths_file": "C:\\Users\\Evgeniy\\projects\\foxproflow-wt\\A-run\\ops\\_local\\evidence\\sec_preflight_20251226_043007\\openapi_paths.txt",
+  "paths_count": 115,
+  "domain_stats": [
+    {
+      "count": 18,
+      "domain": "autoplan"
+    },
+    {
+      "count": 16,
+      "domain": "devfactory"
+    },
+    {
+      "count": 12,
+      "domain": "trips"
+    },
+    {
+      "count": 8,
+      "domain": "devorders"
+    },
+    {
+      "count": 7,
+      "domain": "driver"
+    },
+    {
+      "count": 7,
+      "domain": "eri"
+    },
+    {
+      "count": 6,
+      "domain": "crm"
+    },
+    {
+      "count": 5,
+      "domain": "(root/other)"
+    },
+    {
+      "count": 4,
+      "domain": "dispatcher"
+    },
+    {
+      "count": 4,
+      "domain": "flowlang"
+    },
+    {
+      "count": 4,
+      "domain": "flowworld"
+    },
+    {
+      "count": 3,
+      "domain": "sales"
+    },
+    {
+      "count": 3,
+      "domain": "routing"
+    },
+    {
+      "count": 3,
+      "domain": "trucks"
+    },
+    {
+      "count": 3,
+      "domain": "flowmind"
+    },
+    {
+      "count": 3,
+      "domain": "onboarding"
+    },
+    {
+      "count": 2,
+      "domain": "parsers"
+    },
+    {
+      "count": 2,
+      "domain": "pipeline"
+    },
+    {
+      "count": 2,
+      "domain": "autoplan_legacy"
+    },
+    {
+      "count": 2,
+      "domain": "telemetry"
+    },
+    {
+      "count": 1,
+      "domain": "flowmeta"
+    }
+  ],
+  "items": [
+    {
+      "path": "/api/devfactory/tasks/{task_id}/autofix/run",
+      "domain": "devfactory",
+      "methods": [
+        "POST"
+      ],
+      "score": 145,
+      "priority": "P0",
+      "action": "devfactory.autofix_admin",
+      "policy": "devfactory.autofix_admin"
+    },
+    {
+      "path": "/api/devfactory/tasks/{task_id}/autofix/disable",
+      "domain": "devfactory",
+      "methods": [
+        "POST"
+      ],
+      "score": 100,
+      "priority": "P0",
+      "action": "devfactory.autofix_admin",
+      "policy": "devfactory.autofix_admin"
+    },
+    {
+      "path": "/api/devfactory/tasks/{task_id}/autofix/enable",
+      "domain": "devfactory",
+      "methods": [
+        "POST"
+      ],
+      "score": 100,
+      "priority": "P0",
+      "action": "devfactory.autofix_admin",
+      "policy": "devfactory.autofix_admin"
+    },
+    {
+      "path": "/api/devfactory/tasks/{task_id}/autofix/kpi",
+      "domain": "devfactory",
+      "methods": [
+        "GET"
+      ],
+      "score": 90,
+      "priority": "P0",
+      "action": "devfactory.read",
+      "policy": "devfactory.read"
+    },
+    {
+      "path": "/api/autoplan/trips/{trip_id}/confirm",
+      "domain": "autoplan",
+      "methods": [
+        "POST"
+      ],
+      "score": 85,
+      "priority": "P1",
+      "action": "autoplan.apply",
+      "policy": "autoplan.apply"
+    },
+    {
+      "path": "/api/autoplan_legacy/run",
+      "domain": "autoplan_legacy",
+      "methods": [
+        "POST"
+      ],
+      "score": 80,
+      "priority": "P1",
+      "action": "autoplan_legacy.apply",
+      "policy": "autoplan_legacy.apply"
+    },
+    {
+      "path": "/api/autoplan/run",
+      "domain": "autoplan",
+      "methods": [
+        "POST"
+      ],
+      "score": 80,
+      "priority": "P1",
+      "action": "autoplan.apply",
+      "policy": "autoplan.apply"
+    },
+    {
+      "path": "/api/trips/{trip_id}/confirm",
+      "domain": "trips",
+      "methods": [
+        "POST"
+      ],
+      "score": 75,
+      "priority": "P1",
+      "action": "trips.apply",
+      "policy": "trips.apply"
+    },
+    {
+      "path": "/api/devfactory/tasks/intent",
+      "domain": "devfactory",
+      "methods": [
+        "POST"
+      ],
+      "score": 70,
+      "priority": "P1",
+      "action": "devfactory.write",
+      "policy": "devfactory.write"
+    },
+    {
+      "path": "/api/devorders/{dev_order_id}/link/billing",
+      "domain": "devorders",
+      "methods": [
+        "POST"
+      ],
+      "score": 70,
+      "priority": "P1",
+      "action": "devorders.link_write",
+      "policy": "devorders.link_write"
+    },
+    {
+      "path": "/api/devorders/{dev_order_id}/link/lead",
+      "domain": "devorders",
+      "methods": [
+        "POST"
+      ],
+      "score": 70,
+      "priority": "P1",
+      "action": "devorders.link_write",
+      "policy": "devorders.link_write"
+    },
+    {
+      "path": "/api/devorders/{dev_order_id}/link/tenant",
+      "domain": "devorders",
+      "methods": [
+        "POST"
+      ],
+      "score": 70,
+      "priority": "P1",
+      "action": "devorders.link_write",
+      "policy": "devorders.link_write"
+    },
+    {
+      "path": "/api/trips/autoplan/run/{run_id}",
+      "domain": "trips",
+      "methods": [
+        "GET"
+      ],
+      "score": 70,
+      "priority": "P1",
+      "action": "trips.apply",
+      "policy": "trips.apply"
+    },
+    {
+      "path": "/api/driver/auth/confirm",
+      "domain": "driver",
+      "methods": [
+        "POST"
+      ],
+      "score": 68,
+      "priority": "P1",
+      "action": "driver.apply",
+      "policy": "driver.apply"
+    },
+    {
+      "path": "/api/devfactory/orders",
+      "domain": "devfactory",
+      "methods": [
+        "POST"
+      ],
+      "score": 65,
+      "priority": "P1",
+      "action": "devfactory.write",
+      "policy": "devfactory.write"
+    },
+    {
+      "path": "/api/devfactory/orders/{dev_order_id}",
+      "domain": "devfactory",
+      "methods": [
+        "GET"
+      ],
+      "score": 65,
+      "priority": "P1",
+      "action": "devfactory.write",
+      "policy": "devfactory.write"
+    },
+    {
+      "path": "/api/devfactory/orders/{dev_order_id}/tasks",
+      "domain": "devfactory",
+      "methods": [
+        "GET"
+      ],
+      "score": 65,
+      "priority": "P1",
+      "action": "devfactory.write",
+      "policy": "devfactory.write"
+    },
+    {
+      "path": "/api/devfactory/orders/public/{dev_order_public_id}",
+      "domain": "devfactory",
+      "methods": [
+        "GET"
+      ],
+      "score": 65,
+      "priority": "P1",
+      "action": "devfactory.write",
+      "policy": "devfactory.write"
+    },
+    {
+      "path": "/api/devfactory/orders/recent",
+      "domain": "devfactory",
+      "methods": [
+        "GET"
+      ],
+      "score": 60,
+      "priority": "P1",
+      "action": "devfactory.read",
+      "policy": "devfactory.read"
+    },
+    {
+      "path": "/api/devorders/{dev_order_id}/bootstrap-tasks",
+      "domain": "devorders",
+      "methods": [
+        "POST"
+      ],
+      "score": 50,
+      "priority": "P2",
+      "action": "devorders.admin",
+      "policy": "devorders.admin"
+    },
+    {
+      "path": "/api/devfactory/tasks",
+      "domain": "devfactory",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "score": 40,
+      "priority": "P2",
+      "action": "devfactory.read",
+      "policy": "devfactory.read"
+    },
+    {
+      "path": "/api/devfactory/tasks/{task_id}",
+      "domain": "devfactory",
+      "methods": [
+        "GET",
+        "PATCH",
+        "PUT"
+      ],
+      "score": 40,
+      "priority": "P2",
+      "action": "devfactory.read",
+      "policy": "devfactory.read"
+    },
+    {
+      "path": "/api/devfactory/tasks/{task_id}/questions/regen",
+      "domain": "devfactory",
+      "methods": [
+        "POST"
+      ],
+      "score": 40,
+      "priority": "P2",
+      "action": "devfactory.read",
+      "policy": "devfactory.read"
+    },
+    {
+      "path": "/api/autoplan_legacy/trips/{trip_id}/revert",
+      "domain": "autoplan_legacy",
+      "methods": [
+        "POST"
+      ],
+      "score": 35,
+      "priority": "P2",
+      "action": "autoplan_legacy.read",
+      "policy": "autoplan_legacy.read"
+    },
+    {
+      "path": "/api/autoplan/config",
+      "domain": "autoplan",
+      "methods": [
+        "GET"
+      ],
+      "score": 35,
+      "priority": "P2",
+      "action": "autoplan.read",
+      "policy": "autoplan.read"
+    },
+    {
+      "path": "/api/autoplan/debug/celery",
+      "domain": "autoplan",
+      "methods": [
+        "GET"
+      ],
+      "score": 35,
+      "priority": "P2",
+      "action": "autoplan.read",
+      "policy": "autoplan.read"
+    },
+    {
+      "path": "/api/autoplan/diag/price_layer",
+      "domain": "autoplan",
+      "methods": [
+        "GET"
+      ],
+      "score": 35,
+      "priority": "P2",
+      "action": "autoplan.read",
+      "policy": "autoplan.read"
+    },
+    {
+      "path": "/api/autoplan/pipeline/coords/unknown",
+      "domain": "autoplan",
+      "methods": [
+        "GET"
+      ],
+      "score": 35,
+      "priority": "P2",
+      "action": "autoplan.read",
+      "policy": "autoplan.read"
+    },
+    {
+      "path": "/api/autoplan/pipeline/no_km",
+      "domain": "autoplan",
+      "methods": [
+        "GET"
+      ],
+      "score": 35,
+      "priority": "P2",
+      "action": "autoplan.read",
+      "policy": "autoplan.read"
+    },
+    {
+      "path": "/api/autoplan/pipeline/recent_with_thresholds",
+      "domain": "autoplan",
+      "methods": [
+        "GET"
+      ],
+      "score": 35,
+      "priority": "P2",
+      "action": "autoplan.read",
+      "policy": "autoplan.read"
+    },
+    {
+      "path": "/api/autoplan/pipeline/recent2",
+      "domain": "autoplan",
+      "methods": [
+        "GET"
+      ],
+      "score": 35,
+      "priority": "P2",
+      "action": "autoplan.read",
+      "policy": "autoplan.read"
+    },
+    {
+      "path": "/api/autoplan/pipeline/summary",
+      "domain": "autoplan",
+      "methods": [
+        "GET"
+      ],
+      "score": 35,
+      "priority": "P2",
+      "action": "autoplan.read",
+      "policy": "autoplan.read"
+    },
+    {
+      "path": "/api/autoplan/pipeline/summary2",
+      "domain": "autoplan",
+      "methods": [
+        "GET"
+      ],
+      "score": 35,
+      "priority": "P2",
+      "action": "autoplan.read",
+      "policy": "autoplan.read"
+    },
+    {
+      "path": "/api/autoplan/result/{task_id}",
+      "domain": "autoplan",
+      "methods": [
+        "GET"
+      ],
+      "score": 35,
+      "priority": "P2",
+      "action": "autoplan.read",
+      "policy": "autoplan.read"
+    },
+    {
+      "path": "/api/autoplan/result/batch",
+      "domain": "autoplan",
+      "methods": [
+        "POST"
+      ],
+      "score": 35,
+      "priority": "P2",
+      "action": "autoplan.read",
+      "policy": "autoplan.read"
+    },
+    {
+      "path": "/api/devfactory/catalog",
+      "domain": "devfactory",
+      "methods": [
+        "GET"
+      ],
+      "score": 35,
+      "priority": "P2",
+      "action": "devfactory.read",
+      "policy": "devfactory.read"
+    },
+    {
+      "path": "/api/devfactory/catalog/{order_type}/estimate",
+      "domain": "devfactory",
+      "methods": [
+        "POST"
+      ],
+      "score": 35,
+      "priority": "P2",
+      "action": "devfactory.read",
+      "policy": "devfactory.read"
+    },
+    {
+      "path": "/api/autoplan/pipeline/recent",
+      "domain": "autoplan",
+      "methods": [
+        "GET"
+      ],
+      "score": 30,
+      "priority": "P3",
+      "action": "autoplan.read",
+      "policy": "autoplan.read"
+    },
+    {
+      "path": "/api/autoplan/vitrine/decision/{audit_id}",
+      "domain": "autoplan",
+      "methods": [
+        "GET"
+      ],
+      "score": 30,
+      "priority": "P3",
+      "action": "autoplan.read",
+      "policy": "autoplan.read"
+    },
+    {
+      "path": "/api/autoplan/vitrine/decisions",
+      "domain": "autoplan",
+      "methods": [
+        "GET"
+      ],
+      "score": 30,
+      "priority": "P3",
+      "action": "autoplan.read",
+      "policy": "autoplan.read"
+    },
+    {
+      "path": "/api/devfactory/kpi/tasks",
+      "domain": "devfactory",
+      "methods": [
+        "GET"
+      ],
+      "score": 30,
+      "priority": "P3",
+      "action": "devfactory.read",
+      "policy": "devfactory.read"
+    },
+    {
+      "path": "/api/devorders",
+      "domain": "(root/other)",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "score": 30,
+      "priority": "P3",
+      "action": "_root_other_.read",
+      "policy": "_root_other_.read"
+    },
+    {
+      "path": "/api/devorders/{dev_order_id}",
+      "domain": "devorders",
+      "methods": [
+        "GET"
+      ],
+      "score": 30,
+      "priority": "P3",
+      "action": "devorders.read",
+      "policy": "devorders.read"
+    },
+    {
+      "path": "/api/devorders/{dev_order_id}/commercial-context",
+      "domain": "devorders",
+      "methods": [
+        "GET"
+      ],
+      "score": 30,
+      "priority": "P3",
+      "action": "devorders.read",
+      "policy": "devorders.read"
+    },
+    {
+      "path": "/api/devorders/{dev_order_id}/tasks",
+      "domain": "devorders",
+      "methods": [
+        "GET"
+      ],
+      "score": 30,
+      "priority": "P3",
+      "action": "devorders.read",
+      "policy": "devorders.read"
+    },
+    {
+      "path": "/api/devorders/status",
+      "domain": "devorders",
+      "methods": [
+        "POST"
+      ],
+      "score": 30,
+      "priority": "P3",
+      "action": "devorders.read",
+      "policy": "devorders.read"
+    },
+    {
+      "path": "/api/autoplan/pipeline/kpi",
+      "domain": "autoplan",
+      "methods": [
+        "GET"
+      ],
+      "score": 25,
+      "priority": "P3",
+      "action": "autoplan.read",
+      "policy": "autoplan.read"
+    },
+    {
+      "path": "/api/trips/{trip_id}/facts",
+      "domain": "trips",
+      "methods": [
+        "POST"
+      ],
+      "score": 25,
+      "priority": "P3",
+      "action": "trips.read",
+      "policy": "trips.read"
+    },
+    {
+      "path": "/api/trips/{trip_id}/finish",
+      "domain": "trips",
+      "methods": [
+        "POST"
+      ],
+      "score": 25,
+      "priority": "P3",
+      "action": "trips.read",
+      "policy": "trips.read"
+    },
+    {
+      "path": "/api/trips/{trip_id}/start",
+      "domain": "trips",
+      "methods": [
+        "POST"
+      ],
+      "score": 25,
+      "priority": "P3",
+      "action": "trips.read",
+      "policy": "trips.read"
+    },
+    {
+      "path": "/api/trips/autoplan/latest",
+      "domain": "trips",
+      "methods": [
+        "GET"
+      ],
+      "score": 25,
+      "priority": "P3",
+      "action": "trips.read",
+      "policy": "trips.read"
+    },
+    {
+      "path": "/api/trips/autoplan/runs",
+      "domain": "trips",
+      "methods": [
+        "GET"
+      ],
+      "score": 25,
+      "priority": "P3",
+      "action": "trips.read",
+      "policy": "trips.read"
+    },
+    {
+      "path": "/api/trips/operator/overview",
+      "domain": "trips",
+      "methods": [
+        "GET"
+      ],
+      "score": 25,
+      "priority": "P3",
+      "action": "trips.read",
+      "policy": "trips.read"
+    },
+    {
+      "path": "/api/trips/plan",
+      "domain": "trips",
+      "methods": [
+        "POST"
+      ],
+      "score": 25,
+      "priority": "P3",
+      "action": "trips.read",
+      "policy": "trips.read"
+    },
+    {
+      "path": "/api/trips/recent_clean",
+      "domain": "trips",
+      "methods": [
+        "GET"
+      ],
+      "score": 25,
+      "priority": "P3",
+      "action": "trips.read",
+      "policy": "trips.read"
+    },
+    {
+      "path": "/api/trips/recent_clean_strict",
+      "domain": "trips",
+      "methods": [
+        "GET"
+      ],
+      "score": 25,
+      "priority": "P3",
+      "action": "trips.read",
+      "policy": "trips.read"
+    },
+    {
+      "path": "/api/eri/attention_signal",
+      "domain": "eri",
+      "methods": [
+        "POST"
+      ],
+      "score": 22,
+      "priority": "P3",
+      "action": "eri.read",
+      "policy": "eri.read"
+    },
+    {
+      "path": "/api/eri/attention_signal/_schema",
+      "domain": "eri",
+      "methods": [
+        "GET"
+      ],
+      "score": 22,
+      "priority": "P3",
+      "action": "eri.read",
+      "policy": "eri.read"
+    },
+    {
+      "path": "/api/eri/context",
+      "domain": "eri",
+      "methods": [
+        "GET"
+      ],
+      "score": 22,
+      "priority": "P3",
+      "action": "eri.read",
+      "policy": "eri.read"
+    },
+    {
+      "path": "/api/eri/snapshot",
+      "domain": "eri",
+      "methods": [
+        "POST"
+      ],
+      "score": 22,
+      "priority": "P3",
+      "action": "eri.read",
+      "policy": "eri.read"
+    },
+    {
+      "path": "/api/eri/talk",
+      "domain": "eri",
+      "methods": [
+        "POST"
+      ],
+      "score": 22,
+      "priority": "P3",
+      "action": "eri.read",
+      "policy": "eri.read"
+    },
+    {
+      "path": "/api/autoplan/health",
+      "domain": "autoplan",
+      "methods": [
+        "GET"
+      ],
+      "score": 20,
+      "priority": "P3",
+      "action": "autoplan.read",
+      "policy": "autoplan.read"
+    },
+    {
+      "path": "/api/crm/leads/{lead_id}/mark-ready-for-trial",
+      "domain": "crm",
+      "methods": [
+        "POST"
+      ],
+      "score": 20,
+      "priority": "P3",
+      "action": "crm.read",
+      "policy": "crm.read"
+    },
+    {
+      "path": "/api/crm/leads/{lead_id}/win-and-start-onboarding",
+      "domain": "crm",
+      "methods": [
+        "POST"
+      ],
+      "score": 20,
+      "priority": "P3",
+      "action": "crm.read",
+      "policy": "crm.read"
+    },
+    {
+      "path": "/api/crm/leads/trial-candidates",
+      "domain": "crm",
+      "methods": [
+        "GET"
+      ],
+      "score": 20,
+      "priority": "P3",
+      "action": "crm.read",
+      "policy": "crm.read"
+    },
+    {
+      "path": "/api/crm/trials/overview",
+      "domain": "crm",
+      "methods": [
+        "GET"
+      ],
+      "score": 20,
+      "priority": "P3",
+      "action": "crm.read",
+      "policy": "crm.read"
+    },
+    {
+      "path": "/api/trips/recent",
+      "domain": "trips",
+      "methods": [
+        "GET"
+      ],
+      "score": 20,
+      "priority": "P3",
+      "action": "trips.read",
+      "policy": "trips.read"
+    },
+    {
+      "path": "/api/driver/auth/confirm_code",
+      "domain": "driver",
+      "methods": [
+        "POST"
+      ],
+      "score": 18,
+      "priority": "P3",
+      "action": "driver.read",
+      "policy": "driver.read"
+    },
+    {
+      "path": "/api/driver/auth/request_code",
+      "domain": "driver",
+      "methods": [
+        "POST"
+      ],
+      "score": 18,
+      "priority": "P3",
+      "action": "driver.read",
+      "policy": "driver.read"
+    },
+    {
+      "path": "/api/driver/telemetry/batch",
+      "domain": "driver",
+      "methods": [
+        "POST"
+      ],
+      "score": 18,
+      "priority": "P3",
+      "action": "driver.read",
+      "policy": "driver.read"
+    },
+    {
+      "path": "/api/driver/trips/{trip_id}/ack",
+      "domain": "driver",
+      "methods": [
+        "POST"
+      ],
+      "score": 18,
+      "priority": "P3",
+      "action": "driver.read",
+      "policy": "driver.read"
+    },
+    {
+      "path": "/api/driver/trips/{trip_id}/complete",
+      "domain": "driver",
+      "methods": [
+        "POST"
+      ],
+      "score": 18,
+      "priority": "P3",
+      "action": "driver.read",
+      "policy": "driver.read"
+    },
+    {
+      "path": "/api/driver/trips/assigned",
+      "domain": "driver",
+      "methods": [
+        "GET"
+      ],
+      "score": 18,
+      "priority": "P3",
+      "action": "driver.read",
+      "policy": "driver.read"
+    },
+    {
+      "path": "/api/drivers",
+      "domain": "(root/other)",
+      "methods": [
+        "POST"
+      ],
+      "score": 18,
+      "priority": "P3",
+      "action": "_root_other_.read",
+      "policy": "_root_other_.read"
+    },
+    {
+      "path": "/api/eri/attention_signal/recent",
+      "domain": "eri",
+      "methods": [
+        "GET"
+      ],
+      "score": 17,
+      "priority": "P3",
+      "action": "eri.read",
+      "policy": "eri.read"
+    },
+    {
+      "path": "/api/eri/snapshot/recent",
+      "domain": "eri",
+      "methods": [
+        "GET"
+      ],
+      "score": 17,
+      "priority": "P3",
+      "action": "eri.read",
+      "policy": "eri.read"
+    },
+    {
+      "path": "/api/dispatcher/alerts/{alert_id}/resolve",
+      "domain": "dispatcher",
+      "methods": [
+        "POST"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "dispatcher.read",
+      "policy": "dispatcher.read"
+    },
+    {
+      "path": "/api/dispatcher/alerts/by_trip/{trip_id}/resolve_all",
+      "domain": "dispatcher",
+      "methods": [
+        "POST"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "dispatcher.read",
+      "policy": "dispatcher.read"
+    },
+    {
+      "path": "/api/dispatcher/trips/monitor",
+      "domain": "dispatcher",
+      "methods": [
+        "GET"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "dispatcher.read",
+      "policy": "dispatcher.read"
+    },
+    {
+      "path": "/api/flowlang/plans",
+      "domain": "flowlang",
+      "methods": [
+        "GET"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "flowlang.read",
+      "policy": "flowlang.read"
+    },
+    {
+      "path": "/api/flowlang/plans/{name}",
+      "domain": "flowlang",
+      "methods": [
+        "GET"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "flowlang.read",
+      "policy": "flowlang.read"
+    },
+    {
+      "path": "/api/flowlang/plans/{name}/settings",
+      "domain": "flowlang",
+      "methods": [
+        "GET"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "flowlang.read",
+      "policy": "flowlang.read"
+    },
+    {
+      "path": "/api/flowlang/plans/current",
+      "domain": "flowlang",
+      "methods": [
+        "GET"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "flowlang.read",
+      "policy": "flowlang.read"
+    },
+    {
+      "path": "/api/flowmeta/domains-with-entities",
+      "domain": "flowmeta",
+      "methods": [
+        "GET"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "flowmeta.read",
+      "policy": "flowmeta.read"
+    },
+    {
+      "path": "/api/flowmind/advice",
+      "domain": "flowmind",
+      "methods": [
+        "GET"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "flowmind.read",
+      "policy": "flowmind.read"
+    },
+    {
+      "path": "/api/flowmind/devfactory-suggestions",
+      "domain": "flowmind",
+      "methods": [
+        "GET"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "flowmind.read",
+      "policy": "flowmind.read"
+    },
+    {
+      "path": "/api/flowmind/plans",
+      "domain": "flowmind",
+      "methods": [
+        "GET"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "flowmind.read",
+      "policy": "flowmind.read"
+    },
+    {
+      "path": "/api/flowworld/spaces",
+      "domain": "flowworld",
+      "methods": [
+        "GET"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "flowworld.read",
+      "policy": "flowworld.read"
+    },
+    {
+      "path": "/api/flowworld/spaces/{code}",
+      "domain": "flowworld",
+      "methods": [
+        "GET"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "flowworld.read",
+      "policy": "flowworld.read"
+    },
+    {
+      "path": "/api/flowworld/state",
+      "domain": "flowworld",
+      "methods": [
+        "GET"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "flowworld.read",
+      "policy": "flowworld.read"
+    },
+    {
+      "path": "/api/flowworld/trip-links",
+      "domain": "flowworld",
+      "methods": [
+        "GET"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "flowworld.read",
+      "policy": "flowworld.read"
+    },
+    {
+      "path": "/api/onboarding/sessions/{session_id}",
+      "domain": "onboarding",
+      "methods": [
+        "GET"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "onboarding.read",
+      "policy": "onboarding.read"
+    },
+    {
+      "path": "/api/onboarding/sessions/{session_id}/steps/{step_code}/set-status",
+      "domain": "onboarding",
+      "methods": [
+        "POST"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "onboarding.read",
+      "policy": "onboarding.read"
+    },
+    {
+      "path": "/api/onboarding/sessions/overview",
+      "domain": "onboarding",
+      "methods": [
+        "GET"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "onboarding.read",
+      "policy": "onboarding.read"
+    },
+    {
+      "path": "/api/parsers/ingest/freights",
+      "domain": "parsers",
+      "methods": [
+        "POST"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "parsers.read",
+      "policy": "parsers.read"
+    },
+    {
+      "path": "/api/parsers/ingest/trucks",
+      "domain": "parsers",
+      "methods": [
+        "POST"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "parsers.read",
+      "policy": "parsers.read"
+    },
+    {
+      "path": "/api/pipeline/summary",
+      "domain": "pipeline",
+      "methods": [
+        "GET"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "pipeline.read",
+      "policy": "pipeline.read"
+    },
+    {
+      "path": "/api/routing/route",
+      "domain": "routing",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "routing.read",
+      "policy": "routing.read"
+    },
+    {
+      "path": "/api/routing/table",
+      "domain": "routing",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "routing.read",
+      "policy": "routing.read"
+    },
+    {
+      "path": "/api/sales/message",
+      "domain": "sales",
+      "methods": [
+        "POST"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "sales.read",
+      "policy": "sales.read"
+    },
+    {
+      "path": "/api/sales/proposal/{session_id}",
+      "domain": "sales",
+      "methods": [
+        "GET"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "sales.read",
+      "policy": "sales.read"
+    },
+    {
+      "path": "/api/sales/start",
+      "domain": "sales",
+      "methods": [
+        "POST"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "sales.read",
+      "policy": "sales.read"
+    },
+    {
+      "path": "/api/telemetry",
+      "domain": "(root/other)",
+      "methods": [
+        "POST"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "_root_other_.read",
+      "policy": "_root_other_.read"
+    },
+    {
+      "path": "/api/telemetry/history",
+      "domain": "telemetry",
+      "methods": [
+        "GET"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "telemetry.read",
+      "policy": "telemetry.read"
+    },
+    {
+      "path": "/api/telemetry/latest",
+      "domain": "telemetry",
+      "methods": [
+        "GET"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "telemetry.read",
+      "policy": "telemetry.read"
+    },
+    {
+      "path": "/api/trucks",
+      "domain": "(root/other)",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "_root_other_.read",
+      "policy": "_root_other_.read"
+    },
+    {
+      "path": "/api/trucks/{truck_id}/card",
+      "domain": "trucks",
+      "methods": [
+        "GET"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "trucks.read",
+      "policy": "trucks.read"
+    },
+    {
+      "path": "/api/trucks/{truck_id}/driver/assign",
+      "domain": "trucks",
+      "methods": [
+        "POST"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "trucks.read",
+      "policy": "trucks.read"
+    },
+    {
+      "path": "/api/trucks/attach_trailer",
+      "domain": "trucks",
+      "methods": [
+        "POST"
+      ],
+      "score": 10,
+      "priority": "P3",
+      "action": "trucks.read",
+      "policy": "trucks.read"
+    },
+    {
+      "path": "/api/crm/smoke/db",
+      "domain": "crm",
+      "methods": [
+        "GET"
+      ],
+      "score": 5,
+      "priority": "P3",
+      "action": "crm.read",
+      "policy": "crm.read"
+    },
+    {
+      "path": "/api/crm/smoke/ping",
+      "domain": "crm",
+      "methods": [
+        "GET"
+      ],
+      "score": 5,
+      "priority": "P3",
+      "action": "crm.read",
+      "policy": "crm.read"
+    },
+    {
+      "path": "/api/dispatcher/alerts/recent",
+      "domain": "dispatcher",
+      "methods": [
+        "GET"
+      ],
+      "score": 5,
+      "priority": "P3",
+      "action": "dispatcher.read",
+      "policy": "dispatcher.read"
+    },
+    {
+      "path": "/api/pipeline/recent",
+      "domain": "pipeline",
+      "methods": [
+        "GET"
+      ],
+      "score": 5,
+      "priority": "P3",
+      "action": "pipeline.read",
+      "policy": "pipeline.read"
+    },
+    {
+      "path": "/api/routing/health",
+      "domain": "routing",
+      "methods": [
+        "GET"
+      ],
+      "score": 0,
+      "priority": "P3",
+      "action": "routing.read",
+      "policy": "routing.read"
+    },
+    {
+      "path": "/health/extended2",
+      "domain": "(root/other)",
+      "methods": [
+        "GET"
+      ],
+      "score": 0,
+      "priority": "P3",
+      "action": "_root_other_.read",
+      "policy": "_root_other_.read"
+    }
+  ]
+}
