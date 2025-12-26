@@ -2,15 +2,50 @@
 # file: src/worker/register_tasks.py
 from __future__ import annotations
 
+import importlib
 import logging
 import math
 import os
+import sys
 from typing import Any, Dict, Optional, Tuple
 
 from celery.schedules import crontab
-from celery.signals import beat_init as beat_trap
+
+# Signals: beat + worker (both matter)
+try:
+    from celery.signals import beat_init as beat_trap  # type: ignore
+except Exception:  # pragma: no cover
+    beat_trap = None  # type: ignore
+
+try:
+    from celery.signals import worker_init as worker_trap  # type: ignore
+except Exception:  # pragma: no cover
+    worker_trap = None  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# Runtime detection (avoid heavy bootstrap in celery CLI like inspect)
+# =============================================================================
+
+
+def _is_celery_worker_or_beat() -> bool:
+    """
+    True only for real `celery ... worker|beat ...` processes.
+    False for celery CLI commands like `celery inspect ...` executed inside container.
+    """
+    try:
+        argv = [str(a).lower() for a in sys.argv]
+        joined = " ".join(argv)
+        if "celery" not in joined:
+            return False
+        # worker/beat can appear as separate argv item or inside joined
+        return ("worker" in argv) or ("beat" in argv) or (" worker " in joined) or (" beat " in joined)
+    except Exception:
+        return False
+
+
+_IS_WORKER_BEAT = _is_celery_worker_or_beat()
 
 # =============================================================================
 # ENV helpers
@@ -58,13 +93,14 @@ ROUTING_QUEUE: str = _env_str("ROUTING_QUEUE", _env_str("AUTOPLAN_QUEUE", "autop
 OD_CACHE_MAX_POOL_SIZE: int = _env_int("OD_CACHE_MAX_POOL_SIZE", 5)
 OD_CACHE_POOL_TIMEOUT: int = _env_int("OD_CACHE_POOL_TIMEOUT", 5)
 
-# Пул соединений: psycopg_pool может отсутствовать на раннем импорте — не валим модуль
+# Пул соединений: psycopg_pool может отсутствовать — не валим модуль
 try:
     from psycopg_pool import ConnectionPool  # type: ignore
 except Exception:  # pragma: no cover
     ConnectionPool = None  # type: ignore
 
-if ConnectionPool and OD_CACHE_ENABLED and DATABASE_URL:
+# ВАЖНО: pool создаём только в worker/beat (не в celery inspect / API import)
+if ConnectionPool and OD_CACHE_ENABLED and DATABASE_URL and _IS_WORKER_BEAT:
     try:
         _od_pool = ConnectionPool(
             DATABASE_URL,
@@ -82,7 +118,7 @@ if ConnectionPool and OD_CACHE_ENABLED and DATABASE_URL:
         logger.warning("OD-cache disabled: pool init error: %s", e)
 else:
     _od_pool = None
-    if OD_CACHE_ENABLED:
+    if OD_CACHE_ENABLED and _IS_WORKER_BEAT:
         logger.debug(
             "OD-cache disabled: %s",
             "psycopg_pool missing" if not ConnectionPool else "empty DATABASE_URL",
@@ -107,7 +143,6 @@ def od_cache_upsert_sync(
         return
     try:
         dur = int(round(duration_s or 0))
-
         with _od_pool.connection() as conn, conn.cursor() as cur:
             cur.execute(
                 "SELECT public.fn_od_distance_cache_upsert(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
@@ -246,7 +281,12 @@ def _build_crontab_from(cron_spec: str, every_min: int, default_every_min: int =
             m, h, dom, mon, dow = _parse_cron_5(cron_spec)
             return crontab(minute=m, hour=h, day_of_month=dom, month_of_year=mon, day_of_week=dow)
         except Exception as e:
-            logger.warning("Bad CRON spec=%r: %s. Fallback to */%s * * * *", cron_spec, e, every_min or default_every_min)
+            logger.warning(
+                "Bad CRON spec=%r: %s. Fallback to */%s * * * *",
+                cron_spec,
+                e,
+                every_min or default_every_min,
+            )
     n = max(1, int(every_min or default_every_min))
     return crontab(minute=f"*/{n}")
 
@@ -267,7 +307,12 @@ def ensure_routing_enrich_schedule(app) -> None:
         if need:
             sched = _build_crontab()
             kwargs = {"limit": int(ROUTING_ENRICH_LIMIT), "only_missing": bool(ROUTING_ENRICH_ONLY_MISSING)}
-            bs[ROUTING_ENRICH_ID] = {"task": ROUTING_ENRICH_TASK, "schedule": sched, "kwargs": kwargs, "options": {"queue": ROUTING_ENRICH_QUEUE}}
+            bs[ROUTING_ENRICH_ID] = {
+                "task": ROUTING_ENRICH_TASK,
+                "schedule": sched,
+                "kwargs": kwargs,
+                "options": {"queue": ROUTING_ENRICH_QUEUE},
+            }
             app.conf.beat_schedule = bs
     except Exception as e:  # pragma: no cover
         logger.debug("ensure_routing_enrich_schedule skipped: %s", e)
@@ -288,7 +333,12 @@ def ensure_routing_smoke_schedule(app) -> None:
 
         if need:
             sched = _build_crontab_from(ROUTING_SMOKE_CRON, ROUTING_SMOKE_EVERY_MIN, default_every_min=10)
-            bs[ROUTING_SMOKE_ID] = {"task": ROUTING_SMOKE_TASK, "schedule": sched, "kwargs": kwargs, "options": {"queue": ROUTING_SMOKE_QUEUE}}
+            bs[ROUTING_SMOKE_ID] = {
+                "task": ROUTING_SMOKE_TASK,
+                "schedule": sched,
+                "kwargs": kwargs,
+                "options": {"queue": ROUTING_SMOKE_QUEUE},
+            }
             app.conf.beat_schedule = bs
     except Exception as e:  # pragma: no cover
         logger.debug("ensure_routing_smoke_schedule skipped: %s", e)
@@ -305,7 +355,12 @@ def ensure_devorders_smoke_schedule(app) -> None:
 
         if need:
             sched = _build_crontab_from(DEVORDERS_SMOKE_CRON, DEVORDERS_SMOKE_EVERY_MIN, default_every_min=60)
-            bs[DEVORDERS_SMOKE_ID] = {"task": DEVORDERS_SMOKE_TASK, "schedule": sched, "kwargs": {}, "options": {"queue": DEVORDERS_SMOKE_QUEUE}}
+            bs[DEVORDERS_SMOKE_ID] = {
+                "task": DEVORDERS_SMOKE_TASK,
+                "schedule": sched,
+                "kwargs": {},
+                "options": {"queue": DEVORDERS_SMOKE_QUEUE},
+            }
             app.conf.beat_schedule = bs
     except Exception as e:  # pragma: no cover
         logger.debug("ensure_devorders_smoke_schedule skipped: %s", e)
@@ -325,7 +380,12 @@ def ensure_crm_smoke_schedule(app) -> None:
 
         if need:
             sched = _build_crontab_from(CRM_SMOKE_CRON, CRM_SMOKE_EVERY_MIN, default_every_min=30)
-            bs[CRM_SMOKE_ID] = {"task": CRM_SMOKE_TASK, "schedule": sched, "kwargs": {}, "options": {"queue": CRM_SMOKE_QUEUE}}
+            bs[CRM_SMOKE_ID] = {
+                "task": CRM_SMOKE_TASK,
+                "schedule": sched,
+                "kwargs": {},
+                "options": {"queue": CRM_SMOKE_QUEUE},
+            }
             app.conf.beat_schedule = bs
     except Exception as e:  # pragma: no cover
         logger.debug("ensure_crm_smoke_schedule skipped: %s", e)
@@ -377,8 +437,6 @@ def ensure_market_refresh_schedule(app) -> None:
         logger.debug("ensure_market_refresh_schedule skipped: %s", e)
 
 
-# (остальные ensure_* оставлены без изменений по сути; сокращать здесь не будем)
-
 def ensure_autoplan_guard_schedule(app) -> None:
     try:
         if not AUTOPLAN_GUARD_ENABLED:
@@ -393,7 +451,12 @@ def ensure_autoplan_guard_schedule(app) -> None:
             except Exception:
                 sched = crontab(minute="15", hour="7", day_of_month="*", month_of_year="*", day_of_week="*")
             kwargs = {"days_back": int(AUTOPLAN_GUARD_DAYS_BACK)}
-            bs[AUTOPLAN_GUARD_ID] = {"task": AUTOPLAN_GUARD_TASK, "schedule": sched, "kwargs": kwargs, "options": {"queue": AUTOPLAN_GUARD_QUEUE}}
+            bs[AUTOPLAN_GUARD_ID] = {
+                "task": AUTOPLAN_GUARD_TASK,
+                "schedule": sched,
+                "kwargs": kwargs,
+                "options": {"queue": AUTOPLAN_GUARD_QUEUE},
+            }
             app.conf.beat_schedule = bs
     except Exception as e:  # pragma: no cover
         logger.debug("ensure_autoplan_guard_schedule skipped: %s", e)
@@ -409,7 +472,12 @@ def ensure_observability_schedule(app) -> None:
         if need:
             sched = _build_crontab_from(OBSERVABILITY_SCAN_CRON, OBSERVABILITY_SCAN_EVERY_MIN, default_every_min=10)
             kwargs = {"days_back": int(OBSERVABILITY_SCAN_DAYS_BACK)}
-            bs[OBSERVABILITY_SCAN_ID] = {"task": OBSERVABILITY_SCAN_TASK, "schedule": sched, "kwargs": kwargs, "options": {"queue": OBSERVABILITY_SCAN_QUEUE}}
+            bs[OBSERVABILITY_SCAN_ID] = {
+                "task": OBSERVABILITY_SCAN_TASK,
+                "schedule": sched,
+                "kwargs": kwargs,
+                "options": {"queue": OBSERVABILITY_SCAN_QUEUE},
+            }
             app.conf.beat_schedule = bs
     except Exception as e:  # pragma: no cover
         logger.debug("ensure_observability_schedule skipped: %s", e)
@@ -429,7 +497,12 @@ def ensure_logfox_schedule(app) -> None:
             except Exception:
                 sched = crontab(minute="5", hour="7", day_of_month="*", month_of_year="*", day_of_week="*")
             kwargs = {"days_back": int(LOGFOX_DAYS_BACK)}
-            bs[LOGFOX_ID] = {"task": LOGFOX_TASK, "schedule": sched, "kwargs": kwargs, "options": {"queue": LOGFOX_QUEUE}}
+            bs[LOGFOX_ID] = {
+                "task": LOGFOX_TASK,
+                "schedule": sched,
+                "kwargs": kwargs,
+                "options": {"queue": LOGFOX_QUEUE},
+            }
             app.conf.beat_schedule = bs
     except Exception as e:  # pragma: no cover
         logger.debug("ensure_logfox_schedule skipped: %s", e)
@@ -445,7 +518,12 @@ def ensure_driver_offroute_schedule(app) -> None:
         if need:
             sched = _build_crontab_from(DRIVER_OFFROUTE_CRON, DRIVER_OFFROUTE_EVERY_MIN, default_every_min=2)
             kwargs = {"max_trips": int(DRIVER_OFFROUTE_MAX_TRIPS)}
-            bs[DRIVER_OFFROUTE_ID] = {"task": DRIVER_OFFROUTE_TASK, "schedule": sched, "kwargs": kwargs, "options": {"queue": DRIVER_OFFROUTE_QUEUE}}
+            bs[DRIVER_OFFROUTE_ID] = {
+                "task": DRIVER_OFFROUTE_TASK,
+                "schedule": sched,
+                "kwargs": kwargs,
+                "options": {"queue": DRIVER_OFFROUTE_QUEUE},
+            }
             app.conf.beat_schedule = bs
     except Exception as e:  # pragma: no cover
         logger.debug("ensure_driver_offroute_schedule skipped: %s", e)
@@ -461,7 +539,12 @@ def ensure_salesfox_scan_schedule(app) -> None:
         if need:
             sched = _build_crontab_from(SALESFOX_SCAN_CRON, SALESFOX_SCAN_EVERY_MIN, default_every_min=1)
             kwargs = {"limit": int(SALESFOX_SCAN_LIMIT)}
-            bs[SALESFOX_SCAN_ID] = {"task": SALESFOX_SCAN_TASK, "schedule": sched, "kwargs": kwargs, "options": {"queue": SALESFOX_SCAN_QUEUE}}
+            bs[SALESFOX_SCAN_ID] = {
+                "task": SALESFOX_SCAN_TASK,
+                "schedule": sched,
+                "kwargs": kwargs,
+                "options": {"queue": SALESFOX_SCAN_QUEUE},
+            }
             app.conf.beat_schedule = bs
     except Exception as e:  # pragma: no cover
         logger.debug("ensure_salesfox_scan_schedule skipped: %s", e)
@@ -483,7 +566,12 @@ def ensure_devfactory_dispatch_schedule(app) -> None:
                 continue
             sched = _build_crontab_from(DEVFACTORY_DISPATCH_CRON, DEVFACTORY_DISPATCH_EVERY_MIN, default_every_min=10)
             kwargs = {"stack": st}
-            bs[entry_id] = {"task": DEVFACTORY_DISPATCH_TASK, "schedule": sched, "kwargs": kwargs, "options": {"queue": DEVFACTORY_DISPATCH_QUEUE}}
+            bs[entry_id] = {
+                "task": DEVFACTORY_DISPATCH_TASK,
+                "schedule": sched,
+                "kwargs": kwargs,
+                "options": {"queue": DEVFACTORY_DISPATCH_QUEUE},
+            }
         app.conf.beat_schedule = bs
     except Exception as e:  # pragma: no cover
         logger.debug("ensure_devfactory_dispatch_schedule skipped: %s", e)
@@ -492,6 +580,7 @@ def ensure_devfactory_dispatch_schedule(app) -> None:
 # =============================================================================
 # Declarative agent registry (for diagnostics / HTTP API)
 # =============================================================================
+
 
 def _cron_or_every(cron_spec: str, every_min: int) -> str:
     if cron_spec:
@@ -539,8 +628,6 @@ AGENT_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
 }
 
-# keep existing registry items (analytics/agents/etc.) if needed downstream
-# NOTE: if your existing file has more entries, you can keep them below.
 
 def get_agents_registry() -> Dict[str, Dict[str, Any]]:
     return AGENT_REGISTRY
@@ -566,7 +653,36 @@ def get_beat_schedule_snapshot(app) -> Dict[str, Any]:
 # Import task modules so Celery sees tasks
 # =============================================================================
 
+_CRITICAL_TASK_MODULES = {
+    # Gate-critical: live worker registry must contain these
+    "src.worker.tasks_planner_kpi",
+    "src.worker.tasks_devfactory_analytics",
+    "src.worker.tasks.devfactory_commercial",
+}
+
+_CRITICAL_TASK_NAMES = (
+    "planner.kpi.snapshot",
+    "planner.kpi.daily_refresh",
+    "analytics.devfactory.daily",
+    "devfactory.commercial.run_order",
+)
+
+
+def _import_task_module(mod: str) -> None:
+    try:
+        importlib.import_module(mod)
+        logger.info("tasks_module_loaded: %s", mod)
+    except Exception as e:  # pragma: no cover
+        if mod in _CRITICAL_TASK_MODULES:
+            logger.exception("tasks_module_failed: %s", mod)
+        else:
+            logger.warning("tasks_module_not_loaded: %s (%s)", mod, e)
+
+
 def _ff_import_task_modules() -> None:
+    """
+    Import task modules deterministically so worker registry contains their task names.
+    """
     modules = [
         # core top-level modules
         "src.worker.tasks_ops",
@@ -585,29 +701,51 @@ def _ff_import_task_modules() -> None:
         "src.worker.tasks.routing_smoke",
         "src.worker.tasks.devorders_smoke",
         "src.worker.tasks.crm_smoke",
+
+        # CRITICAL: KPI + DevFactory daily KPI + commercial loop
+        "src.worker.tasks_planner_kpi",
+        "src.worker.tasks_devfactory_analytics",
+        "src.worker.tasks.devfactory_commercial",
     ]
     for mod in modules:
-        try:
-            __import__(mod)
-            logger.info("tasks_module_loaded: %s", mod)
-        except Exception as e:  # pragma: no cover
-            logger.warning("tasks_module_not_loaded: %s (%s)", mod, e)
+        _import_task_module(mod)
+
+
+def _resolve_app(sender=None) -> Any:
+    # sender for worker_init is Worker; it has .app
+    app = getattr(sender, "app", None) or getattr(sender, "_app", None)
+    if app is not None:
+        return app
+    try:
+        from celery import current_app as _cur
+        return getattr(_cur, "_get_current_object", lambda: _cur)()
+    except Exception:
+        return None
 
 
 def _ff_add_routing_drain(sender=None, **kwargs) -> None:
-    try:
-        app = getattr(sender, "app", None) or getattr(sender, "_app", None) or sender
-        if app is None:
-            from celery import current_app as _cur
-            app = getattr(_cur, "_get_current_object", lambda: _cur)()
+    """
+    Bootstrap for worker/beat: schedules + task imports.
+    Runs only in real celery worker/beat runtimes.
+    """
+    if not _IS_WORKER_BEAT:
+        return
 
+    try:
+        app = _resolve_app(sender)
+        if app is None:
+            return
+
+        # schedules
         ensure_routing_enrich_schedule(app)
         ensure_routing_smoke_schedule(app)
         ensure_devorders_smoke_schedule(app)
         ensure_crm_smoke_schedule(app)
 
+        # import tasks for registry
         _ff_import_task_modules()
 
+        # other schedules
         ensure_ati_refresh_schedule(app)
         ensure_market_refresh_schedule(app)
         ensure_autoplan_guard_schedule(app)
@@ -616,10 +754,37 @@ def _ff_add_routing_drain(sender=None, **kwargs) -> None:
         ensure_logfox_schedule(app)
         ensure_devfactory_dispatch_schedule(app)
         ensure_salesfox_scan_schedule(app)
+
+        # registry sanity log (non-fatal)
+        try:
+            missing = [t for t in _CRITICAL_TASK_NAMES if (t not in getattr(app, "tasks", {}))]
+            if missing:
+                logger.error("critical_tasks_missing_in_app_registry: %s", ", ".join(missing))
+        except Exception:
+            pass
+    except Exception:  # pragma: no cover
+        logger.debug("_ff_add_routing_drain skipped", exc_info=True)
+
+
+# =============================================================================
+# Wire hooks (safe, minimal cycles)
+# =============================================================================
+
+# Hook for beat
+if beat_trap is not None:
+    try:
+        beat_trap.connect(_ff_add_routing_drain, weak=False)  # type: ignore[misc]
     except Exception:  # pragma: no cover
         pass
 
+# Hook for worker (CRITICAL)
+if worker_trap is not None:
+    try:
+        worker_trap.connect(_ff_add_routing_drain, weak=False)  # type: ignore[misc]
+    except Exception:  # pragma: no cover
+        pass
 
+# Also hook on_after_configure when celery_app is available (common path)
 try:
     from src.worker.celery_app import app as _app  # noqa: F401
 except Exception:
@@ -631,20 +796,13 @@ if _app is not None:
     except Exception:  # pragma: no cover
         pass
 
-try:
-    beat_trap.connect(_ff_add_routing_drain, weak=False)
-except Exception:  # pragma: no cover
-    pass
-
-try:
-    from celery import current_app as _cur  # noqa: E402
-    _tmp_app = getattr(_cur, "_get_current_object", lambda: _cur)()
-    ensure_routing_enrich_schedule(_tmp_app)
-    ensure_routing_smoke_schedule(_tmp_app)
-    ensure_devorders_smoke_schedule(_tmp_app)
-    ensure_crm_smoke_schedule(_tmp_app)
-except Exception:  # pragma: no cover
-    pass
+# As an extra safety net: in real worker/beat, import critical modules right now
+# (so registry is ready before consumer starts).
+if _IS_WORKER_BEAT:
+    try:
+        _ff_import_task_modules()
+    except Exception:  # pragma: no cover
+        logger.debug("bootstrap import failed", exc_info=True)
 
 
 # =============================================================================
@@ -658,12 +816,23 @@ def task_routing_enrich_trips(limit: int = ROUTING_ENRICH_LIMIT, only_missing: O
     task_name = ROUTING_ENRICH_TASK
     queue_name = ROUTING_ENRICH_QUEUE
 
-    if _app is None:
-        logger.warning("task_routing_enrich_trips: no Celery app, dry-run dispatch skipped (task=%s, kwargs=%s)", task_name, kwargs)
+    app = _resolve_app()
+    if app is None:
+        logger.warning(
+            "task_routing_enrich_trips: no Celery app, dispatch skipped (task=%s, kwargs=%s)",
+            task_name,
+            kwargs,
+        )
         return {"ok": False, "reason": "no_celery_app", "task": task_name, "queue": queue_name, "kwargs": kwargs}
 
-    async_result = _app.send_task(task_name, kwargs=kwargs, queue=queue_name)
-    logger.info("task_routing_enrich_trips: dispatched task_id=%s task=%s queue=%s kwargs=%s", async_result.id, task_name, queue_name, kwargs)
+    async_result = app.send_task(task_name, kwargs=kwargs, queue=queue_name)
+    logger.info(
+        "task_routing_enrich_trips: dispatched task_id=%s task=%s queue=%s kwargs=%s",
+        async_result.id,
+        task_name,
+        queue_name,
+        kwargs,
+    )
     return {"ok": True, "task_id": async_result.id, "task": task_name, "queue": queue_name, "kwargs": kwargs}
 
 
@@ -679,7 +848,7 @@ __all__ = [
     "get_beat_schedule_snapshot",
 ]
 
-# Ensure smoke tasks are registered (do not remove)
+# Keep legacy smoke imports (safe)
 try:
     import src.worker.tasks.routing_smoke  # noqa: F401
 except Exception:
