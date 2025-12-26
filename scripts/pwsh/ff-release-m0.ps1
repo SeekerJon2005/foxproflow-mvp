@@ -49,6 +49,11 @@ param(
   [switch]$VerifyDbContract,
   [switch]$VerifyDbContractPlus,
 
+  # Fresh DB drill (bootstrap_min + suite) via C-sql worktree
+  [switch]$SkipFreshDbDrill,
+  [switch]$KeepFreshDbDrillDb,
+  [string]$FreshDbSqlWorktree = "",
+
   [switch]$NoBackup,
   [switch]$NoBuild,
   [switch]$NoDeploy,
@@ -60,7 +65,7 @@ param(
 )
 
 # NOTE: DO NOT place any executable statements before [CmdletBinding]/param.
-$VERSION = "2025-12-26.det.v6"
+$VERSION = "2025-12-26.det.v7"
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -254,6 +259,19 @@ function Resolve-VerifySuiteFile([string]$repoRoot, [string]$suiteName) {
   $p2 = Join-Path $repoRoot ("scripts\sql\verify\suites\{0}.txt" -f $suiteName)
   if (Test-Path -LiteralPath $p2) { return (Resolve-Path -LiteralPath $p2).Path }
   throw "Verify suite not found: $suiteName"
+}
+
+function Resolve-BackupScript([string]$scriptsDir) {
+  $primary = Join-Path $scriptsDir "ff-backup.ps1"
+  if (Test-Path -LiteralPath $primary) { return (Resolve-Path -LiteralPath $primary).Path }
+
+  $alts = @()
+  try {
+    $alts = Get-ChildItem -LiteralPath $scriptsDir -File -Filter "ff-backup*.ps1" -ErrorAction SilentlyContinue | Sort-Object Name
+  } catch { $alts = @() }
+
+  if ($alts -and $alts.Count -gt 0) { return $alts[0].FullName }
+  return $primary
 }
 
 function Get-PwshExe() {
@@ -493,6 +511,9 @@ Set-Utf8 (Join-Path $evidenceDir "release_meta.json") (
     migrate_mode_requested = $MigrateMode
     verify_gate_m0 = [bool]($VerifyDbContract -or $VerifyDbContractPlus)
     verify_gate_m0_plus = [bool]$VerifyDbContractPlus
+    skip_fresh_db_drill = [bool]$SkipFreshDbDrill
+    keep_fresh_db_drill_db = [bool]$KeepFreshDbDrillDb
+    fresh_db_sql_worktree = $FreshDbSqlWorktree
     no_backup = [bool]$NoBackup
     no_build  = [bool]$NoBuild
     no_deploy = [bool]$NoDeploy
@@ -539,14 +560,105 @@ try {
     Write-Warn "NoRollback: skipping rollback story"
   }
 
+  Write-Step "FRESH DB DRILL (bootstrap_min)"
+  if ($SkipFreshDbDrill) {
+    Write-Warn "SkipFreshDbDrill: skipping fresh DB drill"
+    $steps.Add([pscustomobject]@{ name="fresh_db_drill"; ok=$true; skipped=$true; ts=Now-Iso }) | Out-Null
+  } else {
+    Step "fresh_db_drill" 10 {
+      $drill = Join-Path $PSScriptRoot "ff-fresh-db-drill.ps1"
+      if (-not (Test-Path -LiteralPath $drill)) { throw "ff-fresh-db-drill.ps1 not found: $drill" }
+
+      $sqlWt = $FreshDbSqlWorktree
+      if ([string]::IsNullOrWhiteSpace($sqlWt)) {
+        $sqlWt = Resolve-SiblingWorktree -repoRoot $repoRoot -siblingName "C-sql"
+      }
+      if (-not $sqlWt) {
+        throw "C-sql worktree not found near '$repoRoot'. Provide -FreshDbSqlWorktree explicitly."
+      }
+
+      $bootstrapAbs = Join-Path $sqlWt "scripts\sql\bootstrap_min_apply.sql"
+      $suiteAbs     = Join-Path $sqlWt "scripts\sql\verify\suites\bootstrap_min.txt"
+      if (-not (Test-Path -LiteralPath $bootstrapAbs)) { throw "bootstrap_min_apply.sql not found: $bootstrapAbs" }
+      if (-not (Test-Path -LiteralPath $suiteAbs))     { throw "bootstrap_min suite not found: $suiteAbs" }
+
+      # Non-interactive: discover drill params and pass only what exists.
+      $paramNames = @()
+      try { $paramNames = @((Get-Command $drill -ErrorAction Stop).Parameters.Keys) } catch { $paramNames = @() }
+      Set-Utf8 (Join-Path $evidenceDir "fresh_db_drill_params_detected.json") (($paramNames | ConvertTo-Json -Depth 10))
+
+      $args = New-Object System.Collections.Generic.List[string]
+
+      if ($paramNames -contains "SqlWorktree") {
+        $args.Add("-SqlWorktree") | Out-Null; $args.Add($sqlWt) | Out-Null
+      }
+
+      # Bootstrap path (support multiple spellings)
+      if ($paramNames -contains "BootstrapSqlPath") {
+        $args.Add("-BootstrapSqlPath") | Out-Null; $args.Add($bootstrapAbs) | Out-Null
+      } elseif ($paramNames -contains "BootstrapFile") {
+        $args.Add("-BootstrapFile") | Out-Null; $args.Add($bootstrapAbs) | Out-Null
+      } elseif ($paramNames -contains "BootstrapPath") {
+        $args.Add("-BootstrapPath") | Out-Null; $args.Add($bootstrapAbs) | Out-Null
+      } elseif ($paramNames -contains "VerifyFile") {
+        $args.Add("-VerifyFile") | Out-Null; $args.Add($bootstrapAbs) | Out-Null
+      }
+
+      # Suite path
+      if ($paramNames -contains "SuiteFile") {
+        $args.Add("-SuiteFile") | Out-Null; $args.Add($suiteAbs) | Out-Null
+      } elseif ($paramNames -contains "SuitePath") {
+        $args.Add("-SuitePath") | Out-Null; $args.Add($suiteAbs) | Out-Null
+      }
+
+      # Project hint
+      if ($paramNames -contains "PreferProject") {
+        $args.Add("-PreferProject") | Out-Null; $args.Add($ProjectName) | Out-Null
+      } elseif ($paramNames -contains "ProjectName") {
+        $args.Add("-ProjectName") | Out-Null; $args.Add($ProjectName) | Out-Null
+      } elseif ($paramNames -contains "Project") {
+        $args.Add("-Project") | Out-Null; $args.Add($ProjectName) | Out-Null
+      }
+
+      if ($paramNames -contains "PgUser") {
+        $args.Add("-PgUser") | Out-Null; $args.Add("admin") | Out-Null
+      }
+
+      if ($KeepFreshDbDrillDb) {
+        if ($paramNames -contains "KeepDb") { $args.Add("-KeepDb") | Out-Null }
+        elseif ($paramNames -contains "Keep") { $args.Add("-Keep") | Out-Null }
+      }
+
+      Set-Utf8 (Join-Path $evidenceDir "fresh_db_drill_meta.json") (
+        ([pscustomobject]@{
+          ts = Now-Iso
+          drill = $drill
+          sql_worktree = $sqlWt
+          bootstrap_abs = $bootstrapAbs
+          suite_abs = $suiteAbs
+          keep_db = [bool]$KeepFreshDbDrillDb
+          args = $args.ToArray()
+        } | ConvertTo-Json -Depth 40)
+      )
+
+      $log = Join-Path $evidenceDir "fresh_db_drill.log"
+      $r = Run-PwshScript -ScriptPath $drill -Args ([string[]]$args.ToArray()) -LogPath $log
+      if ($r.code -ne 0) { throw "Fresh DB drill failed (exit=$($r.code)). See: $log" }
+
+      Write-Ok "Fresh DB drill PASS"
+    }
+  }
+
   Write-Step "BACKUP"
   if ($NoBackup) {
     Write-Warn "NoBackup: skipping backup"
     $steps.Add([pscustomobject]@{ name="backup"; ok=$true; skipped=$true; ts=Now-Iso }) | Out-Null
   } else {
     Step "backup" 9 {
-      $backupScript = Join-Path $PSScriptRoot "ff-backup.ps1"
-      if (-not (Test-Path -LiteralPath $backupScript)) { throw "ff-backup.ps1 not found: $backupScript" }
+      $backupScript = Resolve-BackupScript -scriptsDir $PSScriptRoot
+      if (-not (Test-Path -LiteralPath $backupScript)) {
+        throw "ff-backup script not found in: $PSScriptRoot (expected ff-backup.ps1 or ff-backup*.ps1). Pass -NoBackup to skip."
+      }
 
       $log = Join-Path $evidenceDir "backup.log"
       $r = Run-PwshScript -ScriptPath $backupScript -Args ([string[]]@("-BackupDir",$BackupDir,"-ComposeFile",$ComposeFile,"-ProjectName",$ProjectName)) -LogPath $log
@@ -821,6 +933,11 @@ try {
     migrate_mode = $MigrateMode
     backup_dir = $backupOutDir
     rollback_image_tag = $rollbackImageTag
+    fresh_db_drill = [pscustomobject]@{
+      skipped = [bool]$SkipFreshDbDrill
+      keep_db = [bool]$KeepFreshDbDrillDb
+      sql_worktree = $FreshDbSqlWorktree
+    }
     verify = [pscustomobject]@{
       db_contract = [bool]($VerifyDbContract -or $VerifyDbContractPlus)
       db_contract_plus = [bool]$VerifyDbContractPlus
