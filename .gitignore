@@ -140,3 +140,9 @@ celerybeat-schedule
 # FlowMeta local artifacts (generated)
 _contextpacks/
 _flowmeta/
+
+# --- FlowSec (gate scripts must be versioned) ---
+!scripts/pwsh/sec/
+!scripts/pwsh/sec/ff-sec-scan-secrets.ps1
+!scripts/pwsh/sec/ff-sec-allowlist.txt
+# ----------------------------------------------

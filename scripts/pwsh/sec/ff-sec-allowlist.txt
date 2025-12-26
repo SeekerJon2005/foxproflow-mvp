@@ -1,0 +1,8 @@
+# FoxProFlow FlowSec allowlist (regex)
+# Правило: любые исключения должны быть ВРЕМЕННЫМИ и иметь причину/DevTask в комменте.
+
+# Пример исключения на файл:
+# FILE:^docs/legacy/.*$
+
+# Пример исключения на конкретную находку:
+# MATCH:JWT_TOKEN\|staged\|src/.*\|.*\|eyJ
