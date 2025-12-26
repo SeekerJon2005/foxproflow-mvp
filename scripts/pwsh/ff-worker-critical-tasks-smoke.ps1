@@ -5,10 +5,14 @@ file: scripts/pwsh/ff-worker-critical-tasks-smoke.ps1
 
 Goal:
   Ensure Celery worker is responsive AND required tasks are registered.
-  PASS/FAIL + evidence dir.
+  Evidence: ops/_local/evidence/<release_id>/...
+
+Notes:
+  - Uses "celery inspect ping" (more deterministic than "celery status").
+  - Supports RequiredTasks (string[]) for direct invocation AND RequiredTasksCsv for pwsh -File.
+  - Can optionally scan worker logs for "Received unregistered task".
 
 Lane: A-RUN only.
-
 Created by: Архитектор Яцков Евгений Анатольевич
 #>
 
@@ -22,27 +26,29 @@ param(
   [string]$WorkerService = "worker",
   [string]$CeleryApp = "src.worker.celery_app:app",
 
-  # If you don't pass -RequiredTasks explicitly, we use CORE defaults below.
+  # Preferred for direct invocation: .\script.ps1 -RequiredTasks @("a","b")
   [string[]]$RequiredTasks = @(
-    "ops.beat.heartbeat",
-    "ops.queue.watchdog",
-    "ops.alerts.sla",
-    "routing.osrm.warmup",
-    "routing.smoke.osrm_and_db",
-    "crm.smoke.ping",
-    "crm.smoke.db_contract_v2",
-    "devorders.smoke.db_contract",
+    "ops.beat.heartbeat"
+    "ops.queue.watchdog"
+    "ops.alerts.sla"
+    "crm.smoke.ping"
+    "crm.smoke.db_contract_v2"
+    "routing.smoke.osrm_and_db"
     "devfactory.commercial.run_order"
+    "agents.kpi.report"
   ),
 
-  # Robust matching: exact OR fuzzy tokens (planner.kpi.snapshot -> planner.*kpi.*snapshot)
-  [switch]$UseFuzzyMatch,
+  # Preferred for pwsh -File invocation: -RequiredTasksCsv "a;b;c"
+  [string]$RequiredTasksCsv = "",
 
-  [int]$Retries = 30,
+  [int]$Retries = 10,
   [int]$SleepSec = 2,
 
-  [int]$StatusTimeoutSec = 5,
-  [int]$InspectTimeoutSec = 10,
+  [int]$PingTimeoutSec = 10,
+  [int]$InspectTimeoutSec = 20,
+
+  [switch]$CheckUnregisteredInLogs,
+  [int]$LogsSinceMin = 30,
 
   [string]$EvidenceDir = ""
 )
@@ -83,37 +89,53 @@ function DcExec([string]$composeFile, [string]$projectName, [string]$service, [s
   }
 }
 
+function DcLogs([string]$composeFile, [string]$projectName, [string]$service, [string]$sinceArg) {
+  $argv = @("compose","--ansi","never","-f",$composeFile)
+  if ($projectName) { $argv += @("-p",$projectName) }
+  $argv += @("logs","--since",$sinceArg,$service)
+
+  $out = & docker @argv 2>&1
+  $code = $LASTEXITCODE
+  return [pscustomobject]@{
+    code = $code
+    out  = ($out | Out-String)
+    argv = ("docker " + ($argv -join " "))
+  }
+}
+
+function Contains-Pong([string]$text) {
+  if ([string]::IsNullOrWhiteSpace($text)) { return $false }
+  return ($text -match '(?i)\bpong\b')
+}
+
+function Parse-WorkerNameFromPing([string]$text) {
+  if ([string]::IsNullOrWhiteSpace($text)) { return "" }
+  $m = [regex]::Match($text, '(?m)^\s*->\s*([^\s:]+)\s*:\s*OK\s*$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+  if ($m.Success) { return $m.Groups[1].Value.Trim() }
+  return ""
+}
+
 function Extract-RegisteredTasks([string]$text) {
-  $list = New-Object System.Collections.Generic.List[string]
-  foreach ($ln in ($text -split "`r?`n")) {
-    $m = [regex]::Match($ln, '^\s*\*\s+(.+?)\s*$')
-    if ($m.Success) { $list.Add($m.Groups[1].Value.Trim()) | Out-Null }
-  }
-  return ($list.ToArray() | Where-Object { $_ } | Sort-Object -Unique)
+  if ([string]::IsNullOrWhiteSpace($text)) { return @() }
+  $ms = [regex]::Matches($text, '(?m)^\s*\*\s+([^\s]+)\s*$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+  $names = foreach ($m in $ms) { $m.Groups[1].Value.Trim() }
+  return @($names | Where-Object { $_ } | Sort-Object -Unique)
 }
 
-function Build-FuzzyPattern([string]$taskName) {
-  $tokens = @($taskName -split '\.' | Where-Object { $_ })
-  if ($tokens.Count -eq 0) { return [regex]::Escape($taskName) }
-  $esc = $tokens | ForEach-Object { [regex]::Escape($_) }
-  return ($esc -join '.*')
+function Detect-UnregisteredHits([string]$logsText) {
+  if ([string]::IsNullOrWhiteSpace($logsText)) { return @() }
+  $hits = New-Object System.Collections.Generic.List[string]
+  foreach ($line in ($logsText -split "`r?`n")) {
+    if ($line -match 'Received unregistered task') { $hits.Add($line) | Out-Null }
+  }
+  return $hits.ToArray()
 }
 
-function Task-Exists([string]$required, [string[]]$registered, [bool]$useFuzzy) {
-  if (-not $registered) { return $false }
-  $req = $required.Trim()
-  if ([string]::IsNullOrWhiteSpace($req)) { return $true }
-
-  $regLower = @($registered | ForEach-Object { $_.ToLowerInvariant() })
-  if ($regLower -contains $req.ToLowerInvariant()) { return $true }
-
-  if (-not $useFuzzy) { return $false }
-
-  $pat = Build-FuzzyPattern $required
-  foreach ($r in $registered) {
-    if ($r -match $pat) { return $true }
-  }
-  return $false
+function Split-TasksCsv([string]$csv) {
+  if ([string]::IsNullOrWhiteSpace($csv)) { return @() }
+  return @(
+    ($csv -split '[,;`r`n]+' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  )
 }
 
 # -----------------------------
@@ -136,96 +158,156 @@ if ([string]::IsNullOrWhiteSpace($EvidenceDir)) {
 Ensure-Dir $EvidenceDir
 Write-Output ("evidence: " + $EvidenceDir)
 
-# default: enable fuzzy match (safer)
-if (-not $PSBoundParameters.ContainsKey("UseFuzzyMatch")) { $UseFuzzyMatch = $true }
+# Build tasks input from Csv (if provided) else from RequiredTasks
+$tasksIn = @()
+if (-not [string]::IsNullOrWhiteSpace($RequiredTasksCsv)) {
+  $tasksIn = Split-TasksCsv $RequiredTasksCsv
+} else {
+  $tasksIn = @($RequiredTasks)
+}
+
+# sanitize tasks: trim + drop empty + drop anything starting with '-'
+$RequiredTasks = @(
+  $tasksIn |
+    ForEach-Object { if ($_ -ne $null) { $_.ToString().Trim() } } |
+    Where-Object { $_ -and $_ -notmatch '^\s*-' } |
+    Sort-Object -Unique
+)
+if (@($RequiredTasks).Count -eq 0) { throw "RequiredTasks is empty after sanitize." }
 
 Log ("WorkerTasksSmoke: service={0} app={1}" -f $WorkerService, $CeleryApp)
-Log ("WorkerTasksSmoke: required={0}" -f ((@($RequiredTasks) -join ", ")))
-Log ("WorkerTasksSmoke: retries={0} sleep={1} status_t={2} inspect_t={3} fuzzy={4}" -f $Retries, $SleepSec, $StatusTimeoutSec, $InspectTimeoutSec, [bool]$UseFuzzyMatch)
+Log ("WorkerTasksSmoke: required={0}" -f (@($RequiredTasks) -join ", "))
+Log ("WorkerTasksSmoke: retries={0} sleep={1} ping_t={2} inspect_t={3}" -f $Retries, $SleepSec, $PingTimeoutSec, $InspectTimeoutSec)
+if ($CheckUnregisteredInLogs) { Log ("WorkerTasksSmoke: log_check=on since={0}m" -f $LogsSinceMin) }
 
 $ok = $false
-$missing = @()
 $exitCode = 1
 $failReason = ""
+$workerName = ""
+$missing = @()
+$unregisteredHits = @()
+
+$pingLog = Join-Path $EvidenceDir "celery_ping.log"
+$regLog  = Join-Path $EvidenceDir "celery_inspect_registered.log"
+$sumPath = Join-Path $EvidenceDir "summary.json"
+
+Set-Utf8 $pingLog ("ts={0}`n" -f (Now-Iso))
+Set-Utf8 $regLog  ("ts={0}`n" -f (Now-Iso))
 
 try {
-  $statusLog  = Join-Path $EvidenceDir "celery_status.log"
-  $inspectLog = Join-Path $EvidenceDir "celery_inspect_registered.log"
-
   for ($i=1; $i -le $Retries; $i++) {
-    Log ("Attempt {0}/{1}: celery status ..." -f $i, $Retries)
+    Log ("Attempt {0}/{1}: celery inspect ping ..." -f $i, $Retries)
 
-    $st = DcExec -composeFile $ComposeFile -projectName $ProjectName -service $WorkerService -cmd @(
-      "celery","-A",$CeleryApp,"status","--timeout",$StatusTimeoutSec
+    $ping = DcExec -composeFile $ComposeFile -projectName $ProjectName -service $WorkerService -cmd @(
+      "celery","-A",$CeleryApp,"inspect","ping","--timeout",$PingTimeoutSec
     )
-    Set-Utf8 $statusLog ("ts={0}`nargv={1}`nexit_code={2}`n`n{3}" -f (Now-Iso), $st.argv, $st.code, $st.out)
+    Add-Utf8 $pingLog ("--- attempt {0}/{1} ts={2} ---`nargv={3}`nexit_code={4}`n`n{5}`n" -f $i, $Retries, (Now-Iso), $ping.argv, $ping.code, $ping.out)
 
-    if ($st.code -eq 0 -and -not [string]::IsNullOrWhiteSpace($st.out)) {
-      Log "celery status OK, inspecting registered tasks ..."
-      $ins = DcExec -composeFile $ComposeFile -projectName $ProjectName -service $WorkerService -cmd @(
-        "celery","-A",$CeleryApp,"inspect","registered","--timeout",$InspectTimeoutSec
-      )
-      Set-Utf8 $inspectLog ("ts={0}`nargv={1}`nexit_code={2}`n`n{3}" -f (Now-Iso), $ins.argv, $ins.code, $ins.out)
-
-      if ($ins.code -eq 0 -and -not [string]::IsNullOrWhiteSpace($ins.out)) {
-        $taskNames = Extract-RegisteredTasks $ins.out
-        Set-Utf8 (Join-Path $EvidenceDir "registered_tasks_extracted.txt") (($taskNames -join "`n"))
-
-        $missing = @()
-        foreach ($t in @($RequiredTasks)) {
-          if ([string]::IsNullOrWhiteSpace($t)) { continue }
-          if (-not (Task-Exists -required $t -registered $taskNames -useFuzzy ([bool]$UseFuzzyMatch))) { $missing += $t }
-        }
-
-        if ($missing.Count -eq 0) {
-          $ok = $true
-          $exitCode = 0
-          $failReason = ""
-          break
-        } else {
-          $failReason = "Missing required tasks: " + ($missing -join ", ")
-          Set-Utf8 (Join-Path $EvidenceDir "missing_tasks.txt") (($missing -join "`n"))
-          Log ("WARN: {0}" -f $failReason)
-        }
-      } else {
-        $failReason = "celery inspect registered failed (exit=$($ins.code))"
-        Log ("WARN: {0}" -f $failReason)
-      }
-    } else {
-      $failReason = "celery status failed (exit=$($st.code))"
-      Log ("WARN: {0}" -f $failReason)
+    if ($ping.code -ne 0 -or -not (Contains-Pong $ping.out)) {
+      $failReason = "ping failed or no pong replies (exit=$($ping.code))"
+      Start-Sleep -Seconds $SleepSec
+      continue
     }
 
-    Start-Sleep -Seconds $SleepSec
+    $workerName = Parse-WorkerNameFromPing $ping.out
+    if ($workerName) { Log ("Ping OK. WorkerName: {0}" -f $workerName) } else { Log "Ping OK. WorkerName not detected." }
+
+    $cmd = New-Object System.Collections.Generic.List[string]
+    $cmd.AddRange([string[]]@("celery","-A",$CeleryApp,"inspect","registered","--timeout",$InspectTimeoutSec)) | Out-Null
+    if ($workerName) { $cmd.AddRange([string[]]@("-d",$workerName)) | Out-Null }
+
+    Log "Inspecting registered tasks ..."
+    $ins = DcExec -composeFile $ComposeFile -projectName $ProjectName -service $WorkerService -cmd ([string[]]$cmd.ToArray())
+    Add-Utf8 $regLog ("--- attempt {0}/{1} ts={2} ---`nargv={3}`nexit_code={4}`nworker_name={5}`n`n{6}`n" -f `
+      $i, $Retries, (Now-Iso), $ins.argv, $ins.code, $workerName, $ins.out)
+
+    if ($ins.code -ne 0 -or [string]::IsNullOrWhiteSpace($ins.out)) {
+      $failReason = "inspect registered failed or empty output (exit=$($ins.code))"
+      Start-Sleep -Seconds $SleepSec
+      continue
+    }
+
+    $registered = Extract-RegisteredTasks $ins.out
+    Set-Utf8 (Join-Path $EvidenceDir "registered_tasks_extracted.txt") ((@($registered) -join "`n") + "`n")
+
+    $set = @{}
+    foreach ($t in @($registered)) { if ($t) { $set[$t] = $true } }
+
+    $missing = @()
+    foreach ($req in @($RequiredTasks)) {
+      if (-not $set.ContainsKey($req)) { $missing += $req }
+    }
+
+    if (@($missing).Count -gt 0) {
+      Set-Utf8 (Join-Path $EvidenceDir "missing_tasks.txt") ((@($missing) -join "`n") + "`n")
+      $failReason = "Missing required tasks: " + (@($missing) -join ", ")
+      Log ("WARN: {0}" -f $failReason)
+      Start-Sleep -Seconds $SleepSec
+      continue
+    }
+
+    if ($CheckUnregisteredInLogs) {
+      $since = "{0}m" -f $LogsSinceMin
+      $lg = DcLogs -composeFile $ComposeFile -projectName $ProjectName -service $WorkerService -sinceArg $since
+      Set-Utf8 (Join-Path $EvidenceDir "worker_logs_recent.txt") ("ts={0}`nargv={1}`nexit_code={2}`n`n{3}" -f (Now-Iso), $lg.argv, $lg.code, $lg.out)
+
+      $unregisteredHits = @(Detect-UnregisteredHits $lg.out)
+      if (@($unregisteredHits).Count -gt 0) {
+        Set-Utf8 (Join-Path $EvidenceDir "unregistered_hits.txt") ((@($unregisteredHits) -join "`n") + "`n")
+        $failReason = "Found 'Received unregistered task' in worker logs (last ${LogsSinceMin}m)"
+        Log ("WARN: {0}" -f $failReason)
+        Start-Sleep -Seconds $SleepSec
+        continue
+      }
+    }
+
+    $ok = $true
+    $exitCode = 0
+    $failReason = ""
+    break
   }
-} catch {
+
+  if (-not $ok -and [string]::IsNullOrWhiteSpace($failReason)) {
+    $failReason = "Timeout: criteria not met"
+  }
+}
+catch {
   $ok = $false
   $exitCode = 1
   $failReason = $_.Exception.Message
   try { Set-Utf8 (Join-Path $EvidenceDir "error.txt") ($_.Exception.ToString()) } catch {}
 }
 
+$summaryExit = 0
+if (-not $ok) { $summaryExit = $exitCode }
+if ($summaryExit -eq 0 -and -not $ok) { $summaryExit = 1 }
+
 $summary = [pscustomobject]@{
   ts = Now-Iso
   ok = [bool]$ok
-  exit_code = [int]$exitCode
+  exit_code = [int]$summaryExit
   fail_reason = [string]$failReason
   compose_file = $ComposeFile
   project_name = $ProjectName
   worker_service = $WorkerService
   celery_app = $CeleryApp
-  fuzzy_match = [bool]$UseFuzzyMatch
+  worker_name = $workerName
   required_tasks = @($RequiredTasks)
+  required_tasks_csv = $RequiredTasksCsv
   missing_tasks = @($missing)
+  missing_tasks_cnt = [int](@($missing).Count)
+  check_unregistered_logs = [bool]$CheckUnregisteredInLogs
+  logs_since_min = [int]$LogsSinceMin
+  unregistered_hits_cnt = [int](@($unregisteredHits).Count)
   evidence_dir = $EvidenceDir
 }
 
-try { Set-Utf8 (Join-Path $EvidenceDir "summary.json") (($summary | ConvertTo-Json -Depth 40)) } catch {}
+try { Set-Utf8 $sumPath (($summary | ConvertTo-Json -Depth 40)) } catch {}
 
 if ($ok) {
   Log "OK: WorkerTasksSmoke PASS"
   exit 0
 } else {
   Log ("FAIL: WorkerTasksSmoke FAIL: {0}" -f $failReason)
-  exit $exitCode
+  exit $summaryExit
 }
