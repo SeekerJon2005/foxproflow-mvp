@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from celery.schedules import crontab
 
-# Signals: beat + worker (both matter)
+# Signals (worker/beat bootstrap hooks)
 try:
     from celery.signals import beat_init as beat_trap  # type: ignore
 except Exception:  # pragma: no cover
@@ -25,21 +25,20 @@ except Exception:  # pragma: no cover
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# Runtime detection (avoid heavy bootstrap in celery CLI like inspect)
+# Runtime detection (do NOT do heavy bootstrap in celery CLI like inspect)
 # =============================================================================
 
 
 def _is_celery_worker_or_beat() -> bool:
     """
     True only for real `celery ... worker|beat ...` processes.
-    False for celery CLI commands like `celery inspect ...` executed inside container.
+    False for celery CLI commands like `celery inspect ...`.
     """
     try:
         argv = [str(a).lower() for a in sys.argv]
         joined = " ".join(argv)
         if "celery" not in joined:
             return False
-        # worker/beat can appear as separate argv item or inside joined
         return ("worker" in argv) or ("beat" in argv) or (" worker " in joined) or (" beat " in joined)
     except Exception:
         return False
@@ -75,7 +74,6 @@ def _env_str(name: str, default: str) -> str:
 OD_CACHE_ENABLED: bool = _env_flag("OD_CACHE_ENABLED", "1")
 DATABASE_URL: Optional[str] = os.getenv("DATABASE_URL")
 
-# TTL: поддерживаем OD_CACHE_TTL_SEC и OD_CACHE_TTL_H (приоритет — секунды)
 _ttl_sec_raw = os.getenv("OD_CACHE_TTL_SEC")
 if _ttl_sec_raw:
     try:
@@ -86,20 +84,17 @@ if _ttl_sec_raw:
 else:
     OD_CACHE_TTL_H = _env_int("OD_CACHE_TTL_H", 14 * 24)
 
-# Очередь для роутинга — берём ROUTING_QUEUE, иначе AUTOPLAN_QUEUE, иначе 'autoplan'
 ROUTING_QUEUE: str = _env_str("ROUTING_QUEUE", _env_str("AUTOPLAN_QUEUE", "autoplan"))
 
-# Настройки пула для OD-кэша
 OD_CACHE_MAX_POOL_SIZE: int = _env_int("OD_CACHE_MAX_POOL_SIZE", 5)
 OD_CACHE_POOL_TIMEOUT: int = _env_int("OD_CACHE_POOL_TIMEOUT", 5)
 
-# Пул соединений: psycopg_pool может отсутствовать — не валим модуль
 try:
     from psycopg_pool import ConnectionPool  # type: ignore
 except Exception:  # pragma: no cover
     ConnectionPool = None  # type: ignore
 
-# ВАЖНО: pool создаём только в worker/beat (не в celery inspect / API import)
+# IMPORTANT: create pool only in worker/beat runtime (not in celery inspect / API import)
 if ConnectionPool and OD_CACHE_ENABLED and DATABASE_URL and _IS_WORKER_BEAT:
     try:
         _od_pool = ConnectionPool(
@@ -137,7 +132,7 @@ def od_cache_upsert_sync(
     backend: str = "osrm",
 ) -> None:
     """
-    Безопасная запись в кэш OD (не валит таску при сбое БД).
+    Safe write into OD cache (must NOT crash caller task).
     """
     if not _od_pool or not OD_CACHE_ENABLED:
         return
@@ -167,71 +162,63 @@ def od_cache_upsert_sync(
 # Beat schedule: routing-enrich + ATI-refresh + Market Brain + agents + smokes
 # =============================================================================
 
-# Управление через ENV (роутинг)
 ROUTING_ENRICH_ENABLED: bool = _env_flag("ROUTING_ENRICH_ENABLED", "1")
 ROUTING_ENRICH_ID: str = _env_str("ROUTING_ENRICH_ID", "routing-enrich-missing-2m")
 ROUTING_ENRICH_TASK: str = _env_str("ROUTING_ENRICH_TASK", "routing.enrich.trips")
 ROUTING_ENRICH_QUEUE: str = _env_str("ROUTING_ENRICH_QUEUE", ROUTING_QUEUE)
 ROUTING_ENRICH_LIMIT: int = _env_int("ROUTING_ENRICH_LIMIT", 1500)
 ROUTING_ENRICH_ONLY_MISSING: bool = _env_flag("ROUTING_ENRICH_ONLY_MISSING", "1")
-
 ROUTING_ENRICH_EVERY_MIN: int = _env_int("ROUTING_ENRICH_EVERY_MIN", 2)
-ROUTING_ENRICH_CRON: str = os.getenv("ROUTING_ENRICH_CRON", "").strip()
+ROUTING_ENRICH_CRON: str = (os.getenv("ROUTING_ENRICH_CRON") or "").strip()
 
-# --- routing smoke schedule (OSRM + DB contract) ---
 ROUTING_SMOKE_ENABLED: bool = _env_flag("ROUTING_SMOKE_ENABLED", "1")
 ROUTING_SMOKE_ID: str = _env_str("ROUTING_SMOKE_ID", "routing-smoke-10m")
 ROUTING_SMOKE_TASK: str = _env_str("ROUTING_SMOKE_TASK", "routing.smoke.osrm_and_db")
 ROUTING_SMOKE_QUEUE: str = _env_str("ROUTING_SMOKE_QUEUE", "celery")
 ROUTING_SMOKE_EVERY_MIN: int = _env_int("ROUTING_SMOKE_EVERY_MIN", 10)
-ROUTING_SMOKE_CRON: str = os.getenv("ROUTING_SMOKE_CRON", "").strip()
+ROUTING_SMOKE_CRON: str = (os.getenv("ROUTING_SMOKE_CRON") or "").strip()
 ROUTING_SMOKE_SEGMENT_UUID: str = (os.getenv("ROUTING_SMOKE_SEGMENT_UUID") or "").strip()
 
-# --- devorders smoke schedule (DB contract) ---
 DEVORDERS_SMOKE_ENABLED: bool = _env_flag("DEVORDERS_SMOKE_ENABLED", "1")
 DEVORDERS_SMOKE_ID: str = _env_str("DEVORDERS_SMOKE_ID", "devorders-smoke-60m")
 DEVORDERS_SMOKE_TASK: str = _env_str("DEVORDERS_SMOKE_TASK", "devorders.smoke.db_contract")
 DEVORDERS_SMOKE_QUEUE: str = _env_str("DEVORDERS_SMOKE_QUEUE", "celery")
 DEVORDERS_SMOKE_EVERY_MIN: int = _env_int("DEVORDERS_SMOKE_EVERY_MIN", 60)
-DEVORDERS_SMOKE_CRON: str = os.getenv("DEVORDERS_SMOKE_CRON", "").strip()
+DEVORDERS_SMOKE_CRON: str = (os.getenv("DEVORDERS_SMOKE_CRON") or "").strip()
 
-# --- CRM smoke schedule (DB contract v2, no collision) ---
 CRM_SMOKE_ENABLED: bool = _env_flag("CRM_SMOKE_ENABLED", "1")
 CRM_SMOKE_ID: str = _env_str("CRM_SMOKE_ID", "crm-smoke-30m")
 CRM_SMOKE_TASK: str = _env_str("CRM_SMOKE_TASK", "crm.smoke.db_contract_v2")
 CRM_SMOKE_QUEUE: str = _env_str("CRM_SMOKE_QUEUE", "celery")
 CRM_SMOKE_EVERY_MIN: int = _env_int("CRM_SMOKE_EVERY_MIN", 30)
-CRM_SMOKE_CRON: str = os.getenv("CRM_SMOKE_CRON", "").strip()
+CRM_SMOKE_CRON: str = (os.getenv("CRM_SMOKE_CRON") or "").strip()
 
-# Управление через ENV (refresh ATI analytics MV)
 ATI_REFRESH_ENABLED: bool = _env_flag("ATI_REFRESH_ENABLED", "1")
 ATI_REFRESH_ID: str = _env_str("ATI_REFRESH_ID", "analytics-ati-refresh-daily")
 ATI_REFRESH_TASK: str = _env_str("ATI_REFRESH_TASK", "analytics.freights_ati.refresh_price_distance_mv")
-ATI_REFRESH_CRON: str = os.getenv("ATI_REFRESH_CRON", "15 7 * * *").strip()
+ATI_REFRESH_CRON: str = (os.getenv("ATI_REFRESH_CRON") or "15 7 * * *").strip()
 ATI_REFRESH_QUEUE: str = _env_str("ATI_REFRESH_QUEUE", "celery")
 
-# Управление через ENV (Market Brain — refresh demand_forecast)
 MARKET_REFRESH_ENABLED: bool = _env_flag("MARKET_REFRESH_ENABLED", "0")
 MARKET_REFRESH_ID: str = _env_str("MARKET_REFRESH_ID", "analytics-market-refresh-daily")
 MARKET_REFRESH_TASK: str = _env_str("MARKET_REFRESH_TASK", "analytics.market.refresh_demand_forecast")
-MARKET_REFRESH_CRON: str = os.getenv("MARKET_REFRESH_CRON", "30 6 * * *").strip()
+MARKET_REFRESH_CRON: str = (os.getenv("MARKET_REFRESH_CRON") or "30 6 * * *").strip()
 MARKET_REFRESH_QUEUE: str = _env_str("MARKET_REFRESH_QUEUE", "celery")
 
-# Управление через ENV (агенты)
 AGENTS_QUEUE: str = _env_str("AGENTS_QUEUE", "agents")
 
 AUTOPLAN_GUARD_ENABLED: bool = _env_flag("AUTOPLAN_GUARD_ENABLED", "1")
 AUTOPLAN_GUARD_ID: str = _env_str("AUTOPLAN_GUARD_ID", "agents-autoplan-guard-daily")
 AUTOPLAN_GUARD_TASK: str = _env_str("AUTOPLAN_GUARD_TASK", "agents.autoplan.guard")
 AUTOPLAN_GUARD_QUEUE: str = _env_str("AUTOPLAN_GUARD_QUEUE", AGENTS_QUEUE)
-AUTOPLAN_GUARD_CRON: str = os.getenv("AUTOPLAN_GUARD_CRON", "15 7 * * *").strip()
+AUTOPLAN_GUARD_CRON: str = (os.getenv("AUTOPLAN_GUARD_CRON") or "15 7 * * *").strip()
 AUTOPLAN_GUARD_DAYS_BACK: int = _env_int("AUTOPLAN_GUARD_DAYS_BACK", 3)
 
 OBSERVABILITY_SCAN_ENABLED: bool = _env_flag("OBSERVABILITY_SCAN_ENABLED", "1")
 OBSERVABILITY_SCAN_ID: str = _env_str("OBSERVABILITY_SCAN_ID", "agents-observability-scan-10m")
 OBSERVABILITY_SCAN_TASK: str = _env_str("OBSERVABILITY_SCAN_TASK", "agents.observability.scan")
 OBSERVABILITY_SCAN_QUEUE: str = _env_str("OBSERVABILITY_SCAN_QUEUE", AGENTS_QUEUE)
-OBSERVABILITY_SCAN_CRON: str = os.getenv("OBSERVABILITY_SCAN_CRON", "").strip()
+OBSERVABILITY_SCAN_CRON: str = (os.getenv("OBSERVABILITY_SCAN_CRON") or "").strip()
 OBSERVABILITY_SCAN_EVERY_MIN: int = _env_int("OBSERVABILITY_SCAN_EVERY_MIN", 10)
 OBSERVABILITY_SCAN_DAYS_BACK: int = _env_int("OBSERVABILITY_SCAN_DAYS_BACK", 3)
 
@@ -239,14 +226,14 @@ LOGFOX_ENABLED: bool = _env_flag("LOGFOX_ENABLED", "1")
 LOGFOX_ID: str = _env_str("LOGFOX_ID", "agents-logfox-daily")
 LOGFOX_TASK: str = _env_str("LOGFOX_TASK", "agents.logfox.daily_report")
 LOGFOX_QUEUE: str = _env_str("LOGFOX_QUEUE", AGENTS_QUEUE)
-LOGFOX_CRON: str = os.getenv("LOGFOX_CRON", "5 7 * * *").strip()
+LOGFOX_CRON: str = (os.getenv("LOGFOX_CRON") or "5 7 * * *").strip()
 LOGFOX_DAYS_BACK: int = _env_int("LOGFOX_DAYS_BACK", 1)
 
 DRIVER_OFFROUTE_ENABLED: bool = _env_flag("DRIVER_OFFROUTE_ENABLED", "1")
 DRIVER_OFFROUTE_ID: str = _env_str("DRIVER_OFFROUTE_ID", "driver-offroute-2m")
 DRIVER_OFFROUTE_TASK: str = _env_str("DRIVER_OFFROUTE_TASK", "driver.alerts.offroute")
 DRIVER_OFFROUTE_QUEUE: str = _env_str("DRIVER_OFFROUTE_QUEUE", AGENTS_QUEUE)
-DRIVER_OFFROUTE_CRON: str = os.getenv("DRIVER_OFFROUTE_CRON", "").strip()
+DRIVER_OFFROUTE_CRON: str = (os.getenv("DRIVER_OFFROUTE_CRON") or "").strip()
 DRIVER_OFFROUTE_EVERY_MIN: int = _env_int("DRIVER_OFFROUTE_EVERY_MIN", 2)
 DRIVER_OFFROUTE_MAX_TRIPS: int = _env_int("DRIVER_OFFROUTE_MAX_TRIPS", 50)
 
@@ -254,7 +241,7 @@ SALESFOX_SCAN_ENABLED: bool = _env_flag("SALESFOX_SCAN_ENABLED", "1")
 SALESFOX_SCAN_ID: str = _env_str("SALESFOX_SCAN_ID", "salesfox-scan-trials-1m")
 SALESFOX_SCAN_TASK: str = _env_str("SALESFOX_SCAN_TASK", "salesfox.scan_and_start_trials")
 SALESFOX_SCAN_QUEUE: str = _env_str("SALESFOX_SCAN_QUEUE", AGENTS_QUEUE)
-SALESFOX_SCAN_CRON: str = os.getenv("SALESFOX_SCAN_CRON", "").strip()
+SALESFOX_SCAN_CRON: str = (os.getenv("SALESFOX_SCAN_CRON") or "").strip()
 SALESFOX_SCAN_EVERY_MIN: int = _env_int("SALESFOX_SCAN_EVERY_MIN", 1)
 SALESFOX_SCAN_LIMIT: int = _env_int("SALESFOX_SCAN_LIMIT", 32)
 
@@ -264,7 +251,7 @@ DEVFACTORY_DISPATCH_TASK: str = _env_str("DEVFACTORY_DISPATCH_TASK", "devfactory
 DEVFACTORY_DISPATCH_QUEUE: str = _env_str("DEVFACTORY_DISPATCH_QUEUE", "celery")
 DEVFACTORY_DISPATCH_EVERY_MIN: int = _env_int("DEVFACTORY_DISPATCH_EVERY_MIN", 10)
 DEVFACTORY_DISPATCH_STACKS: str = _env_str("DEVFACTORY_DISPATCH_STACKS", "python_backend")
-DEVFACTORY_DISPATCH_CRON: str = os.getenv("DEVFACTORY_DISPATCH_CRON", "").strip()
+DEVFACTORY_DISPATCH_CRON: str = (os.getenv("DEVFACTORY_DISPATCH_CRON") or "").strip()
 
 
 def _parse_cron_5(spec: str) -> Tuple[str, str, str, str, str]:
@@ -291,10 +278,6 @@ def _build_crontab_from(cron_spec: str, every_min: int, default_every_min: int =
     return crontab(minute=f"*/{n}")
 
 
-def _build_crontab() -> crontab:
-    return _build_crontab_from(ROUTING_ENRICH_CRON, ROUTING_ENRICH_EVERY_MIN, default_every_min=2)
-
-
 def ensure_routing_enrich_schedule(app) -> None:
     try:
         if not ROUTING_ENRICH_ENABLED:
@@ -305,7 +288,7 @@ def ensure_routing_enrich_schedule(app) -> None:
         entry = bs.get(ROUTING_ENRICH_ID)
         need = (not isinstance(entry, dict)) or (entry.get("task") != ROUTING_ENRICH_TASK) or (not entry.get("schedule"))
         if need:
-            sched = _build_crontab()
+            sched = _build_crontab_from(ROUTING_ENRICH_CRON, ROUTING_ENRICH_EVERY_MIN, default_every_min=2)
             kwargs = {"limit": int(ROUTING_ENRICH_LIMIT), "only_missing": bool(ROUTING_ENRICH_ONLY_MISSING)}
             bs[ROUTING_ENRICH_ID] = {
                 "task": ROUTING_ENRICH_TASK,
@@ -367,9 +350,6 @@ def ensure_devorders_smoke_schedule(app) -> None:
 
 
 def ensure_crm_smoke_schedule(app) -> None:
-    """
-    CRM DB-contract smoke (v2 task name).
-    """
     try:
         if not CRM_SMOKE_ENABLED:
             return
@@ -497,12 +477,7 @@ def ensure_logfox_schedule(app) -> None:
             except Exception:
                 sched = crontab(minute="5", hour="7", day_of_month="*", month_of_year="*", day_of_week="*")
             kwargs = {"days_back": int(LOGFOX_DAYS_BACK)}
-            bs[LOGFOX_ID] = {
-                "task": LOGFOX_TASK,
-                "schedule": sched,
-                "kwargs": kwargs,
-                "options": {"queue": LOGFOX_QUEUE},
-            }
+            bs[LOGFOX_ID] = {"task": LOGFOX_TASK, "schedule": sched, "kwargs": kwargs, "options": {"queue": LOGFOX_QUEUE}}
             app.conf.beat_schedule = bs
     except Exception as e:  # pragma: no cover
         logger.debug("ensure_logfox_schedule skipped: %s", e)
@@ -518,12 +493,7 @@ def ensure_driver_offroute_schedule(app) -> None:
         if need:
             sched = _build_crontab_from(DRIVER_OFFROUTE_CRON, DRIVER_OFFROUTE_EVERY_MIN, default_every_min=2)
             kwargs = {"max_trips": int(DRIVER_OFFROUTE_MAX_TRIPS)}
-            bs[DRIVER_OFFROUTE_ID] = {
-                "task": DRIVER_OFFROUTE_TASK,
-                "schedule": sched,
-                "kwargs": kwargs,
-                "options": {"queue": DRIVER_OFFROUTE_QUEUE},
-            }
+            bs[DRIVER_OFFROUTE_ID] = {"task": DRIVER_OFFROUTE_TASK, "schedule": sched, "kwargs": kwargs, "options": {"queue": DRIVER_OFFROUTE_QUEUE}}
             app.conf.beat_schedule = bs
     except Exception as e:  # pragma: no cover
         logger.debug("ensure_driver_offroute_schedule skipped: %s", e)
@@ -539,12 +509,7 @@ def ensure_salesfox_scan_schedule(app) -> None:
         if need:
             sched = _build_crontab_from(SALESFOX_SCAN_CRON, SALESFOX_SCAN_EVERY_MIN, default_every_min=1)
             kwargs = {"limit": int(SALESFOX_SCAN_LIMIT)}
-            bs[SALESFOX_SCAN_ID] = {
-                "task": SALESFOX_SCAN_TASK,
-                "schedule": sched,
-                "kwargs": kwargs,
-                "options": {"queue": SALESFOX_SCAN_QUEUE},
-            }
+            bs[SALESFOX_SCAN_ID] = {"task": SALESFOX_SCAN_TASK, "schedule": sched, "kwargs": kwargs, "options": {"queue": SALESFOX_SCAN_QUEUE}}
             app.conf.beat_schedule = bs
     except Exception as e:  # pragma: no cover
         logger.debug("ensure_salesfox_scan_schedule skipped: %s", e)
@@ -566,21 +531,15 @@ def ensure_devfactory_dispatch_schedule(app) -> None:
                 continue
             sched = _build_crontab_from(DEVFACTORY_DISPATCH_CRON, DEVFACTORY_DISPATCH_EVERY_MIN, default_every_min=10)
             kwargs = {"stack": st}
-            bs[entry_id] = {
-                "task": DEVFACTORY_DISPATCH_TASK,
-                "schedule": sched,
-                "kwargs": kwargs,
-                "options": {"queue": DEVFACTORY_DISPATCH_QUEUE},
-            }
+            bs[entry_id] = {"task": DEVFACTORY_DISPATCH_TASK, "schedule": sched, "kwargs": kwargs, "options": {"queue": DEVFACTORY_DISPATCH_QUEUE}}
         app.conf.beat_schedule = bs
     except Exception as e:  # pragma: no cover
         logger.debug("ensure_devfactory_dispatch_schedule skipped: %s", e)
 
 
 # =============================================================================
-# Declarative agent registry (for diagnostics / HTTP API)
+# Declarative registry (minimal; extend if needed)
 # =============================================================================
-
 
 def _cron_or_every(cron_spec: str, every_min: int) -> str:
     if cron_spec:
@@ -650,22 +609,17 @@ def get_beat_schedule_snapshot(app) -> Dict[str, Any]:
 
 
 # =============================================================================
-# Import task modules so Celery sees tasks
+# Task module import (CRITICAL for live worker registry)
 # =============================================================================
 
-_CRITICAL_TASK_MODULES = {
-    # Gate-critical: live worker registry must contain these
-    "src.worker.tasks_planner_kpi",
-    "src.worker.tasks_devfactory_analytics",
-    "src.worker.tasks.devfactory_commercial",
-}
-
-_CRITICAL_TASK_NAMES = (
-    "planner.kpi.snapshot",
-    "planner.kpi.daily_refresh",
-    "analytics.devfactory.daily",
-    "devfactory.commercial.run_order",
-)
+_CRITICAL_TASK_MODULES = [
+    # KPI (planner)
+    "src.worker.tasks_planner_kpi",            # planner.kpi.snapshot / planner.kpi.daily_refresh
+    # DevFactory daily analytics KPI
+    "src.worker.tasks_devfactory_analytics",   # analytics.devfactory.daily
+    # commercial loop
+    "src.worker.tasks.devfactory_commercial",  # devfactory.commercial.run_order
+]
 
 
 def _import_task_module(mod: str) -> None:
@@ -679,12 +633,13 @@ def _import_task_module(mod: str) -> None:
             logger.warning("tasks_module_not_loaded: %s (%s)", mod, e)
 
 
-def _ff_import_task_modules() -> None:
+def _import_all_task_modules() -> None:
     """
-    Import task modules deterministically so worker registry contains their task names.
+    Import deterministic set of task modules in worker/beat runtime.
+    IMPORTANT: ensure app is current/default BEFORE importing (shared_task binding).
     """
     modules = [
-        # core top-level modules
+        # core
         "src.worker.tasks_ops",
         "src.worker.tasks_autoplan",
         "src.worker.tasks_parsers",
@@ -697,22 +652,19 @@ def _ff_import_task_modules() -> None:
         "src.worker.tasks_market",
         "src.worker.tasks_salesfox",
 
-        # smoke tasks
+        # smokes
         "src.worker.tasks.routing_smoke",
         "src.worker.tasks.devorders_smoke",
         "src.worker.tasks.crm_smoke",
 
-        # CRITICAL: KPI + DevFactory daily KPI + commercial loop
-        "src.worker.tasks_planner_kpi",
-        "src.worker.tasks_devfactory_analytics",
-        "src.worker.tasks.devfactory_commercial",
+        # CRITICAL
+        *(_CRITICAL_TASK_MODULES),
     ]
-    for mod in modules:
-        _import_task_module(mod)
+    for m in modules:
+        _import_task_module(m)
 
 
 def _resolve_app(sender=None) -> Any:
-    # sender for worker_init is Worker; it has .app
     app = getattr(sender, "app", None) or getattr(sender, "_app", None)
     if app is not None:
         return app
@@ -723,10 +675,20 @@ def _resolve_app(sender=None) -> Any:
         return None
 
 
-def _ff_add_routing_drain(sender=None, **kwargs) -> None:
+def _ensure_app_is_current(app: Any) -> None:
+    try:
+        app.set_current()
+        app.set_default()
+    except Exception:
+        pass
+
+
+def _bootstrap_worker_or_beat(sender=None, **kwargs) -> None:
     """
-    Bootstrap for worker/beat: schedules + task imports.
-    Runs only in real celery worker/beat runtimes.
+    Worker/Beat bootstrap:
+      - set app current/default (for shared_task)
+      - ensure schedules
+      - import task modules (critical for live registry / inspect registered)
     """
     if not _IS_WORKER_BEAT:
         return
@@ -736,16 +698,14 @@ def _ff_add_routing_drain(sender=None, **kwargs) -> None:
         if app is None:
             return
 
+        _ensure_app_is_current(app)
+
         # schedules
         ensure_routing_enrich_schedule(app)
         ensure_routing_smoke_schedule(app)
         ensure_devorders_smoke_schedule(app)
         ensure_crm_smoke_schedule(app)
 
-        # import tasks for registry
-        _ff_import_task_modules()
-
-        # other schedules
         ensure_ati_refresh_schedule(app)
         ensure_market_refresh_schedule(app)
         ensure_autoplan_guard_schedule(app)
@@ -755,54 +715,27 @@ def _ff_add_routing_drain(sender=None, **kwargs) -> None:
         ensure_devfactory_dispatch_schedule(app)
         ensure_salesfox_scan_schedule(app)
 
-        # registry sanity log (non-fatal)
-        try:
-            missing = [t for t in _CRITICAL_TASK_NAMES if (t not in getattr(app, "tasks", {}))]
-            if missing:
-                logger.error("critical_tasks_missing_in_app_registry: %s", ", ".join(missing))
-        except Exception:
-            pass
+        # tasks
+        _import_all_task_modules()
     except Exception:  # pragma: no cover
-        logger.debug("_ff_add_routing_drain skipped", exc_info=True)
+        logger.debug("_bootstrap_worker_or_beat skipped", exc_info=True)
 
 
 # =============================================================================
-# Wire hooks (safe, minimal cycles)
+# Wire hooks (NO celery_app import here)
 # =============================================================================
 
-# Hook for beat
 if beat_trap is not None:
     try:
-        beat_trap.connect(_ff_add_routing_drain, weak=False)  # type: ignore[misc]
+        beat_trap.connect(_bootstrap_worker_or_beat, weak=False)  # type: ignore[misc]
     except Exception:  # pragma: no cover
         pass
 
-# Hook for worker (CRITICAL)
 if worker_trap is not None:
     try:
-        worker_trap.connect(_ff_add_routing_drain, weak=False)  # type: ignore[misc]
+        worker_trap.connect(_bootstrap_worker_or_beat, weak=False)  # type: ignore[misc]
     except Exception:  # pragma: no cover
         pass
-
-# Also hook on_after_configure when celery_app is available (common path)
-try:
-    from src.worker.celery_app import app as _app  # noqa: F401
-except Exception:
-    _app = None
-
-if _app is not None:
-    try:
-        _app.on_after_configure.connect(_ff_add_routing_drain, weak=False)
-    except Exception:  # pragma: no cover
-        pass
-
-# As an extra safety net: in real worker/beat, import critical modules right now
-# (so registry is ready before consumer starts).
-if _IS_WORKER_BEAT:
-    try:
-        _ff_import_task_modules()
-    except Exception:  # pragma: no cover
-        logger.debug("bootstrap import failed", exc_info=True)
 
 
 # =============================================================================
@@ -812,28 +745,16 @@ if _IS_WORKER_BEAT:
 def task_routing_enrich_trips(limit: int = ROUTING_ENRICH_LIMIT, only_missing: Optional[bool] = None) -> Dict[str, Any]:
     if only_missing is None:
         only_missing = ROUTING_ENRICH_ONLY_MISSING
-    kwargs: Dict[str, Any] = {"limit": int(limit), "only_missing": bool(only_missing)}
-    task_name = ROUTING_ENRICH_TASK
-    queue_name = ROUTING_ENRICH_QUEUE
+    kwargs2: Dict[str, Any] = {"limit": int(limit), "only_missing": bool(only_missing)}
 
     app = _resolve_app()
     if app is None:
-        logger.warning(
-            "task_routing_enrich_trips: no Celery app, dispatch skipped (task=%s, kwargs=%s)",
-            task_name,
-            kwargs,
-        )
-        return {"ok": False, "reason": "no_celery_app", "task": task_name, "queue": queue_name, "kwargs": kwargs}
+        logger.warning("task_routing_enrich_trips: no Celery app, dispatch skipped (task=%s, kwargs=%s)", ROUTING_ENRICH_TASK, kwargs2)
+        return {"ok": False, "reason": "no_celery_app", "task": ROUTING_ENRICH_TASK, "queue": ROUTING_ENRICH_QUEUE, "kwargs": kwargs2}
 
-    async_result = app.send_task(task_name, kwargs=kwargs, queue=queue_name)
-    logger.info(
-        "task_routing_enrich_trips: dispatched task_id=%s task=%s queue=%s kwargs=%s",
-        async_result.id,
-        task_name,
-        queue_name,
-        kwargs,
-    )
-    return {"ok": True, "task_id": async_result.id, "task": task_name, "queue": queue_name, "kwargs": kwargs}
+    async_result = app.send_task(ROUTING_ENRICH_TASK, kwargs=kwargs2, queue=ROUTING_ENRICH_QUEUE)
+    logger.info("task_routing_enrich_trips: dispatched task_id=%s task=%s queue=%s kwargs=%s", async_result.id, ROUTING_ENRICH_TASK, ROUTING_ENRICH_QUEUE, kwargs2)
+    return {"ok": True, "task_id": async_result.id, "task": ROUTING_ENRICH_TASK, "queue": ROUTING_ENRICH_QUEUE, "kwargs": kwargs2}
 
 
 __all__ = [
@@ -847,19 +768,3 @@ __all__ = [
     "get_agents_registry",
     "get_beat_schedule_snapshot",
 ]
-
-# Keep legacy smoke imports (safe)
-try:
-    import src.worker.tasks.routing_smoke  # noqa: F401
-except Exception:
-    pass
-
-try:
-    import src.worker.tasks.devorders_smoke  # noqa: F401
-except Exception:
-    pass
-
-try:
-    import src.worker.tasks.crm_smoke  # noqa: F401
-except Exception:
-    pass
