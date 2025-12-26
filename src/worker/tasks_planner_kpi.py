@@ -6,133 +6,107 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict
+
+from celery import shared_task
 
 from src.worker.pg_connect import _connect_pg
 
-logger = logging.getLogger(__name__)
-
-TASK_SNAPSHOT = "planner.kpi.snapshot"
-TASK_DAILY_REFRESH = "planner.kpi.daily_refresh"
-
-_task_snapshot_obj = None
-_task_daily_obj = None
+log = logging.getLogger(__name__)
 
 
-def _env_bool(name: str, default: bool = False) -> bool:
+def _env_int(name: str, default: int = 0) -> int:
     v = os.getenv(name, "")
     if v == "":
         return default
-    s = str(v).strip().lower()
-    return s in {"1", "true", "yes", "y", "on", "enable", "enabled"}
+    try:
+        return int(str(v).strip())
+    except Exception:
+        return default
 
 
-def _qident(name: str) -> str:
-    return '"' + str(name).replace('"', '""') + '"'
-
-
-def _pick_zeroarg_kpi_snapshot_callable(cur) -> Optional[Tuple[str, str, str]]:
+def _call_if_exists(cur, regproc: str, call_sql: str) -> bool:
     """
-    Find a zero-arg function/procedure like '*kpi*snapshot*'.
-    Returns: (schema, name, prokind) where prokind: 'f' function, 'p' procedure.
+    regproc example: planner.kpi_snapshot()
+    call_sql example: SELECT planner.kpi_snapshot();
     """
-    cur.execute(
-        """
-        SELECT n.nspname AS schema_name,
-               p.proname AS fn_name,
-               p.prokind AS prokind
-        FROM pg_proc p
-        JOIN pg_namespace n ON n.oid = p.pronamespace
-        WHERE p.pronargs = 0
-          AND p.proname ILIKE '%kpi%'
-          AND p.proname ILIKE '%snapshot%'
-        ORDER BY
-          (n.nspname = 'planner') DESC,
-          (n.nspname = 'ops') DESC,
-          n.nspname ASC,
-          p.proname ASC
-        LIMIT 1
-        """
-    )
+    cur.execute("SELECT to_regprocedure(%s);", (regproc,))
     row = cur.fetchone()
-    if not row:
-        return None
-    return (str(row[0]), str(row[1]), str(row[2]))
+    if not row or row[0] is None:
+        return False
+    cur.execute(call_sql)
+    return True
 
 
-def _call_zeroarg_callable(cur, schema: str, fn_name: str, prokind: str) -> None:
-    ident = f"{_qident(schema)}.{_qident(fn_name)}"
-    if prokind == "p":
-        cur.execute(f"CALL {ident};")
-    else:
-        cur.execute(f"SELECT {ident}();")
-
-
-def _pick_kpi_daily_matview(cur) -> Optional[Tuple[str, str]]:
-    """
-    Pick a matview like '*kpi*daily*' (prefer schema planner).
-    """
-    cur.execute(
-        """
-        SELECT n.nspname AS schema_name,
-               c.relname AS relname
-        FROM pg_class c
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.relkind = 'm'
-          AND c.relname ILIKE '%kpi%'
-          AND c.relname ILIKE '%daily%'
-        ORDER BY
-          (n.nspname = 'planner') DESC,
-          c.relname ASC
-        LIMIT 1
-        """
-    )
-    row = cur.fetchone()
-    if not row:
-        return None
-    return (str(row[0]), str(row[1]))
-
-
+@shared_task(name="planner.kpi.snapshot", bind=True, acks_late=True, ignore_result=False)
 def planner_kpi_snapshot(self) -> Dict[str, Any]:
     """
-    Hourly KPI snapshot task.
+    Captures a KPI snapshot into planner.kpi_snapshots (prefer DB-side function if present).
 
-    - ENABLE_PLANNER_KPI_SNAPSHOT=0 -> skipped.
-    - Calls best matching DB callable '*kpi*snapshot*' (function/procedure).
-    - Controlled NOOP if callable not found.
+    Prefer:
+      - SELECT planner.kpi_snapshot();
+    Fallback:
+      - insert minimal payload into planner.kpi_snapshots(payload)
     """
     task_id = getattr(getattr(self, "request", None), "id", None)
     ts0 = datetime.now(timezone.utc).isoformat()
 
-    if not _env_bool("ENABLE_PLANNER_KPI_SNAPSHOT", True):
-        return {"ok": True, "skipped": True, "reason": "disabled_by_env", "ts": ts0, "task_id": task_id}
-
     t0 = time.perf_counter()
     conn = _connect_pg()
     try:
-        with conn.cursor() as cur:
-            pick = _pick_zeroarg_kpi_snapshot_callable(cur)
-            if not pick:
-                conn.commit()
-                logger.warning("%s: no db callable '*kpi*snapshot*' found -> noop", TASK_SNAPSHOT)
-                return {"ok": False, "skipped": True, "reason": "no_snapshot_db_callable", "ts": ts0, "task_id": task_id}
+        stmt_timeout_ms = _env_int("FF_PLANNER_KPI_STMT_TIMEOUT_MS", 0)
+        lock_timeout_ms = _env_int("FF_PLANNER_KPI_LOCK_TIMEOUT_MS", 0)
 
-            schema, fn_name, prokind = pick
-            _call_zeroarg_callable(cur, schema=schema, fn_name=fn_name, prokind=prokind)
-            conn.commit()
+        did_call = False
+        did_fallback_insert = False
+
+        with conn.cursor() as cur:
+            if stmt_timeout_ms and stmt_timeout_ms > 0:
+                cur.execute("SET LOCAL statement_timeout = %s;", (int(stmt_timeout_ms),))
+            if lock_timeout_ms and lock_timeout_ms > 0:
+                cur.execute("SET LOCAL lock_timeout = %s;", (int(lock_timeout_ms),))
+
+            # try DB-side function
+            did_call = _call_if_exists(cur, "planner.kpi_snapshot()", "SELECT planner.kpi_snapshot();")
+
+            if not did_call:
+                # fallback: insert minimal payload if table exists
+                cur.execute("SELECT to_regclass('planner.kpi_snapshots');")
+                r = cur.fetchone()
+                if r and r[0] is not None:
+                    cur.execute(
+                        "INSERT INTO planner.kpi_snapshots(payload) VALUES (%s::jsonb);",
+                        ('{"source":"celery","note":"fallback_insert"}',),
+                    )
+                    did_fallback_insert = True
+
+        conn.commit()
 
         latency_ms = int((time.perf_counter() - t0) * 1000)
-        logger.info("%s: ok callable=%s.%s kind=%s latency_ms=%s task_id=%s", TASK_SNAPSHOT, schema, fn_name, prokind, latency_ms, task_id)
-        return {"ok": True, "ts": ts0, "task_id": task_id, "called": f"{schema}.{fn_name}", "prokind": prokind, "latency_ms": latency_ms}
+        log.info(
+            "planner.kpi.snapshot: ok latency_ms=%s task_id=%s (db_func=%s fallback_insert=%s)",
+            latency_ms,
+            task_id,
+            did_call,
+            did_fallback_insert,
+        )
+        return {
+            "ok": True,
+            "ts": ts0,
+            "task_id": task_id,
+            "db_func_used": did_call,
+            "fallback_insert": did_fallback_insert,
+            "latency_ms": latency_ms,
+        }
 
-    except Exception as exc:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
+        latency_ms = int((time.perf_counter() - t0) * 1000)
+        log.exception("planner.kpi.snapshot failed task_id=%s: %s", task_id, e)
         try:
             conn.rollback()
         except Exception:
             pass
-        latency_ms = int((time.perf_counter() - t0) * 1000)
-        logger.exception("%s: failed task_id=%s: %s", TASK_SNAPSHOT, task_id, exc)
-        return {"ok": False, "ts": ts0, "task_id": task_id, "error": str(exc), "latency_ms": latency_ms}
+        return {"ok": False, "ts": ts0, "task_id": task_id, "error": str(e), "latency_ms": latency_ms}
     finally:
         try:
             conn.close()
@@ -140,95 +114,74 @@ def planner_kpi_snapshot(self) -> Dict[str, Any]:
             pass
 
 
-def planner_kpi_daily_refresh(self, concurrently: bool = True) -> Dict[str, Any]:
+@shared_task(name="planner.kpi.daily_refresh", bind=True, acks_late=True, ignore_result=False)
+def planner_kpi_daily_refresh(self) -> Dict[str, Any]:
     """
-    Daily refresh of KPI matview.
+    Refreshes planner.planner_kpi_daily (prefer DB-side function if present).
 
-    - ENABLE_PLANNER_KPI_DAILY_REFRESH=0 -> skipped.
-    - Finds matview '*kpi*daily*' and runs REFRESH (tries CONCURRENTLY first).
+    Prefer:
+      - SELECT planner.kpi_daily_refresh();
+    Fallback:
+      - REFRESH MATERIALIZED VIEW planner.planner_kpi_daily;
     """
     task_id = getattr(getattr(self, "request", None), "id", None)
     ts0 = datetime.now(timezone.utc).isoformat()
 
-    if not _env_bool("ENABLE_PLANNER_KPI_DAILY_REFRESH", True):
-        return {"ok": True, "skipped": True, "reason": "disabled_by_env", "ts": ts0, "task_id": task_id}
-
     t0 = time.perf_counter()
     conn = _connect_pg()
     try:
+        stmt_timeout_ms = _env_int("FF_PLANNER_KPI_DAILY_STMT_TIMEOUT_MS", 0)
+        lock_timeout_ms = _env_int("FF_PLANNER_KPI_DAILY_LOCK_TIMEOUT_MS", 0)
+
+        did_call = False
+        did_refresh_mv = False
+
         with conn.cursor() as cur:
-            mv = _pick_kpi_daily_matview(cur)
-            if not mv:
-                conn.commit()
-                logger.warning("%s: no matview '*kpi*daily*' found -> noop", TASK_DAILY_REFRESH)
-                return {"ok": False, "skipped": True, "reason": "no_daily_matview", "ts": ts0, "task_id": task_id}
+            if stmt_timeout_ms and stmt_timeout_ms > 0:
+                cur.execute("SET LOCAL statement_timeout = %s;", (int(stmt_timeout_ms),))
+            if lock_timeout_ms and lock_timeout_ms > 0:
+                cur.execute("SET LOCAL lock_timeout = %s;", (int(lock_timeout_ms),))
 
-            schema, relname = mv
-            ident = f"{_qident(schema)}.{_qident(relname)}"
+            # try DB-side function first
+            did_call = _call_if_exists(cur, "planner.kpi_daily_refresh()", "SELECT planner.kpi_daily_refresh();")
 
-            if concurrently:
-                try:
-                    cur.execute(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {ident};")
-                    conn.commit()
-                    latency_ms = int((time.perf_counter() - t0) * 1000)
-                    logger.info("%s: ok matview=%s.%s mode=concurrently latency_ms=%s task_id=%s", TASK_DAILY_REFRESH, schema, relname, latency_ms, task_id)
-                    return {"ok": True, "ts": ts0, "task_id": task_id, "matview": f"{schema}.{relname}", "mode": "concurrently", "latency_ms": latency_ms}
-                except Exception:
-                    try:
-                        conn.rollback()
-                    except Exception:
-                        pass
+            if not did_call:
+                # fallback: refresh MV if exists
+                cur.execute("SELECT to_regclass('planner.planner_kpi_daily');")
+                r = cur.fetchone()
+                if r and r[0] is not None:
+                    cur.execute("REFRESH MATERIALIZED VIEW planner.planner_kpi_daily;")
+                    did_refresh_mv = True
 
-            cur.execute(f"REFRESH MATERIALIZED VIEW {ident};")
-            conn.commit()
-            latency_ms = int((time.perf_counter() - t0) * 1000)
-            logger.info("%s: ok matview=%s.%s mode=plain latency_ms=%s task_id=%s", TASK_DAILY_REFRESH, schema, relname, latency_ms, task_id)
-            return {"ok": True, "ts": ts0, "task_id": task_id, "matview": f"{schema}.{relname}", "mode": "plain", "latency_ms": latency_ms}
+        conn.commit()
 
-    except Exception as exc:  # noqa: BLE001
+        latency_ms = int((time.perf_counter() - t0) * 1000)
+        log.info(
+            "planner.kpi.daily_refresh: ok latency_ms=%s task_id=%s (db_func=%s mv_refresh=%s)",
+            latency_ms,
+            task_id,
+            did_call,
+            did_refresh_mv,
+        )
+        return {
+            "ok": True,
+            "ts": ts0,
+            "task_id": task_id,
+            "db_func_used": did_call,
+            "mv_refresh": did_refresh_mv,
+            "latency_ms": latency_ms,
+        }
+
+    except Exception as e:  # noqa: BLE001
+        latency_ms = int((time.perf_counter() - t0) * 1000)
+        log.exception("planner.kpi.daily_refresh failed task_id=%s: %s", task_id, e)
         try:
             conn.rollback()
         except Exception:
             pass
-        latency_ms = int((time.perf_counter() - t0) * 1000)
-        logger.exception("%s: failed task_id=%s: %s", TASK_DAILY_REFRESH, task_id, exc)
-        return {"ok": False, "ts": ts0, "task_id": task_id, "error": str(exc), "latency_ms": latency_ms}
+        return {"ok": False, "ts": ts0, "task_id": task_id, "error": str(e), "latency_ms": latency_ms}
     finally:
         try:
             conn.close()
         except Exception:
             pass
-
-
-def register(app) -> Dict[str, str]:
-    """
-    Deterministic registration into конкретный Celery app (worker-side).
-    This is the key fix for persistent 'unregistered task' issues.
-    """
-    global _task_snapshot_obj, _task_daily_obj
-
-    if app is None:
-        raise RuntimeError("tasks_planner_kpi.register(app): app is None")
-
-    out: Dict[str, str] = {}
-
-    if TASK_SNAPSHOT not in app.tasks:
-        _task_snapshot_obj = app.task(name=TASK_SNAPSHOT, bind=True, acks_late=True, ignore_result=False)(planner_kpi_snapshot)
-    else:
-        _task_snapshot_obj = app.tasks[TASK_SNAPSHOT]
-    out["snapshot"] = getattr(_task_snapshot_obj, "name", TASK_SNAPSHOT)
-
-    if TASK_DAILY_REFRESH not in app.tasks:
-        _task_daily_obj = app.task(name=TASK_DAILY_REFRESH, bind=True, acks_late=True, ignore_result=False)(planner_kpi_daily_refresh)
-    else:
-        _task_daily_obj = app.tasks[TASK_DAILY_REFRESH]
-    out["daily_refresh"] = getattr(_task_daily_obj, "name", TASK_DAILY_REFRESH)
-
-    return out
-
-
-__all__ = [
-    "register",
-    "planner_kpi_snapshot",
-    "planner_kpi_daily_refresh",
-]
