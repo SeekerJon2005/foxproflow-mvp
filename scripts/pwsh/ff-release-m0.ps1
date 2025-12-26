@@ -73,7 +73,7 @@ param(
 )
 
 # NOTE: DO NOT place any executable statements before [CmdletBinding]/param.
-$VERSION = "2025-12-26.det.v12"
+$VERSION = "2025-12-26.det.v13"
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -232,7 +232,6 @@ function Write-RollbackStory([string]$path, [hashtable]$ctx) {
   if ($ctx.compose_file) { $dc += " -f `"$($ctx.compose_file)`"" }
   if ($ctx.project_name) { $dc += " -p $($ctx.project_name)" }
   $t += ("3) {0} up -d --build api worker beat" -f $dc)
-
   $t += ("4) curl.exe -4 --http1.1 --noproxy 127.0.0.1 `"{0}/health/extended`"" -f $ctx.base_url)
   $t += ""
   Set-Utf8 $path ($t -join "`n")
@@ -297,7 +296,7 @@ function Get-PwshExe() {
   return "pwsh"
 }
 
-# Important: never collide with automatic variable $args
+# Important: never collide with automatic variable $args (case-insensitive)
 function Run-PwshScript(
   [string]$ScriptPath,
   [Alias("Args")]
@@ -318,91 +317,6 @@ function Run-PwshScript(
   if ($LogPath) {
     $text = ("argv={0}`n`n{1}`nexit_code={2}`n" -f ("$pwshExe " + ($argv -join " ")), ($out | Out-String), $code)
     if ($AppendLog) { Add-Utf8 $LogPath $text } else { Set-Utf8 $LogPath $text }
-  }
-
-  return [pscustomobject]@{ code=$code; out=($out|Out-String) }
-}
-
-# --- psql include expansion (\i/\ir) for SQL apply ---
-function Try-ParsePsqlInclude([string]$line) {
-  $m = [regex]::Match($line, '^\s*\\i(r)?\s+(.+?)\s*$')
-  if (-not $m.Success) { return $null }
-
-  $p = $m.Groups[2].Value.Trim()
-  $p = ($p -replace '\s+--.*$', '').Trim()
-
-  if (($p.StartsWith('"') -and $p.EndsWith('"')) -or ($p.StartsWith("'") -and $p.EndsWith("'"))) {
-    if ($p.Length -ge 2) { $p = $p.Substring(1, $p.Length - 2) }
-  }
-
-  if ([string]::IsNullOrWhiteSpace($p)) { return $null }
-  return $p
-}
-
-function Expand-PsqlIncludes([string]$sqlFile, [hashtable]$seen = $null) {
-  if (-not $seen) { $seen = @{} }
-  if (-not (Test-Path -LiteralPath $sqlFile)) { throw "SQL file not found: $sqlFile" }
-
-  $full = (Resolve-Path -LiteralPath $sqlFile).Path
-  if ($seen.ContainsKey($full)) {
-    return ("-- SKIP RECURSIVE INCLUDE: {0}`n" -f $full)
-  }
-  $seen[$full] = $true
-
-  $baseDir = Split-Path $full -Parent
-  $sb = New-Object System.Text.StringBuilder
-
-  $lines = Get-Content -LiteralPath $full -Encoding UTF8
-  foreach ($line in $lines) {
-    $incRel = Try-ParsePsqlInclude $line
-    if ($incRel) {
-      $incPath = $incRel
-      if (-not [System.IO.Path]::IsPathRooted($incPath)) { $incPath = Join-Path $baseDir $incPath }
-      if (-not (Test-Path -LiteralPath $incPath)) {
-        throw ("psql include not found: {0} (resolved: {1}) referenced from {2}" -f $incRel, $incPath, $full)
-      }
-      $incFull = (Resolve-Path -LiteralPath $incPath).Path
-      [void]$sb.AppendLine(("-- BEGIN INCLUDE: {0} => {1}" -f $incRel, $incFull))
-      [void]$sb.Append((Expand-PsqlIncludes -sqlFile $incFull -seen $seen))
-      [void]$sb.AppendLine(("-- END INCLUDE: {0}" -f $incRel))
-      continue
-    }
-    [void]$sb.AppendLine($line)
-  }
-
-  return $sb.ToString()
-}
-
-function Invoke-PsqlSqlFile(
-  [string]$composeFile,
-  [string]$projectName,
-  [string]$sqlFile,
-  [string]$logPath,
-  [string]$dbName = "foxproflow"
-) {
-  if (-not (Test-Path -LiteralPath $sqlFile)) { throw "SQL file not found: $sqlFile" }
-
-  $raw = Get-Content -Raw -Encoding UTF8 $sqlFile
-  $needsExpand = ($raw -match '(?m)^\s*\\i(r)?\s+')
-  $sql = if ($needsExpand) { Expand-PsqlIncludes -sqlFile $sqlFile -seen @{} } else { $raw }
-
-  $dcArgv = @(
-    "compose","--ansi","never","-f",$composeFile,"-p",$projectName,
-    "exec","-T","postgres",
-    "psql","-U","admin","-d",$dbName,"-X","-v","ON_ERROR_STOP=1","-f","-"
-  )
-
-  $out = $sql | & docker @dcArgv 2>&1
-  $code = $LASTEXITCODE
-
-  if ($logPath) {
-    $logDir = Split-Path $logPath -Parent
-    if ($needsExpand -and $logDir) {
-      $expandedName = "expanded_" + [System.IO.Path]::GetFileName($sqlFile)
-      Set-Utf8 (Join-Path $logDir $expandedName) $sql
-    }
-    Set-Utf8 $logPath ("=== APPLY/VERIFY SQL via STDIN ===`nfile={0}`nts={1}`ndb={2}`nargv=docker {3}`n`n{4}`nexit_code={5}`n" -f `
-      $sqlFile, (Now-Iso), $dbName, ($dcArgv -join " "), ($out | Out-String), $code)
   }
 
   return [pscustomobject]@{ code=$code; out=($out|Out-String) }
@@ -476,28 +390,28 @@ function Invoke-SmokeM0([string]$baseUrl, [string]$evidenceDir) {
   $reportJson = Join-Path $evidenceDir "smoke_m0.json"
   $log = Join-Path $evidenceDir "smoke_m0.log"
 
-  $localArgs = @()
+  $argsLocal = @()
 
-  if ($params -contains "BaseUrl") { $localArgs += @("-BaseUrl", $baseUrl) }
-  elseif ($params -contains "ApiBase") { $localArgs += @("-ApiBase", $baseUrl) }
-  elseif ($params -contains "ApiUrl") { $localArgs += @("-ApiUrl", $baseUrl) }
+  if ($params -contains "BaseUrl") { $argsLocal += @("-BaseUrl", $baseUrl) }
+  elseif ($params -contains "ApiBase") { $argsLocal += @("-ApiBase", $baseUrl) }
+  elseif ($params -contains "ApiUrl") { $argsLocal += @("-ApiUrl", $baseUrl) }
 
-  if ($params -contains "KpiMode") { $localArgs += @("-KpiMode", "strict") }
-  elseif ($params -contains "Mode") { $localArgs += @("-Mode", "strict") }
+  if ($params -contains "KpiMode") { $argsLocal += @("-KpiMode", "strict") }
+  elseif ($params -contains "Mode") { $argsLocal += @("-Mode", "strict") }
 
-  if ($params -contains "ReportPath") { $localArgs += @("-ReportPath", $reportJson) }
-  elseif ($params -contains "ReportFile") { $localArgs += @("-ReportFile", $reportJson) }
-  elseif ($params -contains "OutFile") { $localArgs += @("-OutFile", $reportJson) }
-  elseif ($params -contains "OutputFile") { $localArgs += @("-OutputFile", $reportJson) }
-  elseif ($params -contains "EvidenceDir") { $localArgs += @("-EvidenceDir", $evidenceDir) }
-  elseif ($params -contains "OutDir") { $localArgs += @("-OutDir", $evidenceDir) }
+  if ($params -contains "ReportPath") { $argsLocal += @("-ReportPath", $reportJson) }
+  elseif ($params -contains "ReportFile") { $argsLocal += @("-ReportFile", $reportJson) }
+  elseif ($params -contains "OutFile") { $argsLocal += @("-OutFile", $reportJson) }
+  elseif ($params -contains "OutputFile") { $argsLocal += @("-OutputFile", $reportJson) }
+  elseif ($params -contains "EvidenceDir") { $argsLocal += @("-EvidenceDir", $evidenceDir) }
+  elseif ($params -contains "OutDir") { $argsLocal += @("-OutDir", $evidenceDir) }
 
   if ($ArchitectKey) {
-    if ($params -contains "ArchitectKey") { $localArgs += @("-ArchitectKey", $ArchitectKey) }
-    elseif ($params -contains "Key") { $localArgs += @("-Key", $ArchitectKey) }
+    if ($params -contains "ArchitectKey") { $argsLocal += @("-ArchitectKey", $ArchitectKey) }
+    elseif ($params -contains "Key") { $argsLocal += @("-Key", $ArchitectKey) }
   }
 
-  $r = Run-PwshScript -ScriptPath $smoke -Args ([string[]]$localArgs) -LogPath $log
+  $r = Run-PwshScript -ScriptPath $smoke -Args ([string[]]$argsLocal) -LogPath $log
   if ($r.code -ne 0) { throw "smoke failed (exit=$($r.code))" }
 
   if (-not (Test-Path -LiteralPath $reportJson)) {
@@ -551,7 +465,6 @@ $evName = ($ReleaseId -like "release_m0_*") ? $ReleaseId : ("release_m0_" + $evS
 $evidenceDir = Join-Path $repoRoot ("ops\_local\evidence\{0}" -f $evName)
 Ensure-Dir $evidenceDir
 
-# canonical evidence line
 Write-Output ("evidence: " + $evidenceDir)
 
 $started = Now-Iso
@@ -572,8 +485,10 @@ $failReason = ""
 $ok = $true
 $composeServices = @()
 
-# fresh-drill runtime facts (for summary)
-$freshDrill = [ordered]@{ skipped=$true; keep_db=$false; sql_worktree=$null; drill_script=$null; temp_db=$null; evidence_dir=$null; ok=$null }
+# Fresh drill summary payload
+$freshDrill = [ordered]@{
+  skipped=$true; keep_db=$false; sql_worktree=$null; drill_script=$null; temp_db=$null; evidence_dir=$null; ok=$null
+}
 
 function Step([string]$name, [int]$failExitCode, [scriptblock]$fn) {
   $t0 = Now-Iso
@@ -645,6 +560,9 @@ try {
     Write-Warn "NoRollback: skipping rollback story"
   }
 
+  # -----------------------------
+  # FRESH DB DRILL (bootstrap_min)
+  # -----------------------------
   Write-Step "FRESH DB DRILL (bootstrap_min)"
   if ($SkipFreshDbDrill) {
     $freshDrill.skipped = $true
@@ -656,15 +574,9 @@ try {
       $freshDrill.skipped = $false
       $freshDrill.keep_db = [bool]$KeepFreshDbDrillDb
 
-      $drillName = "ff-drill-fresh-db-bootstrap-min.ps1"
-      $drill = Join-Path $PSScriptRoot $drillName
-
-      if (-not (Test-Path -LiteralPath $drill)) {
-        $alts = @()
-        try { $alts = Get-ChildItem -LiteralPath $PSScriptRoot -File -Filter "ff-drill-fresh-db-*.ps1" -ErrorAction SilentlyContinue | Sort-Object Name } catch { $alts = @() }
-        try { Set-Utf8 (Join-Path $evidenceDir "fresh_db_drill_missing.txt") ("missing={0}`nfound:`n{1}`n" -f $drill, (($alts | ForEach-Object {$_.FullName}) -join "`n")) } catch {}
-        throw "Missing drill script: $drill"
-      }
+      # IMPORTANT: call the local, known-good drill script by absolute path
+      $drill = Join-Path $PSScriptRoot "ff-fresh-db-drill.ps1"
+      if (-not (Test-Path -LiteralPath $drill)) { throw "Missing drill script: $drill" }
       $freshDrill.drill_script = $drill
 
       $sqlWt = $FreshDbSqlWorktree
@@ -684,19 +596,26 @@ try {
       $freshDrill.evidence_dir = $drillDir
 
       $rand = Get-Random -Minimum 1000 -Maximum 9999
-      $tempDb = Sanitize-DbName ("tmp_gate_bootmin_{0}_{1}" -f $evSuffix, $rand)
+      $tempDb = Sanitize-DbName ("ff_tmp_{0}_{1}" -f $evSuffix, $rand)
       $freshDrill.temp_db = $tempDb
 
-      $drillArgs = New-Object System.Collections.Generic.List[string]
-      $drillArgs.AddRange([string[]]@(
-        "-ComposeFile",$ComposeFile,
-        "-ProjectName",$ProjectName,
-        "-TempDbName",$tempDb,
-        "-BootstrapSqlFile",$bootstrapAbs,
-        "-SuiteFile",$suiteAbs,
-        "-EvidenceDir",$drillDir
-      )) | Out-Null
-      if ($KeepFreshDbDrillDb) { $drillArgs.Add("-KeepTempDb") | Out-Null }
+      # Detect params supported by drill, but ALWAYS pass bootstrap/suite when possible to avoid prompts
+      $drillParams = Get-ScriptParamNames $drill
+      Set-Utf8 (Join-Path $drillDir "drill_params_detected.json") (($drillParams | ConvertTo-Json -Depth 10))
+
+      $args = New-Object System.Collections.Generic.List[string]
+
+      if ($drillParams -contains "SqlWorktree") { $args.AddRange([string[]]@("-SqlWorktree",$sqlWt)) | Out-Null }
+
+      # These two are the main anti-prompt guarantees:
+      if ($drillParams -contains "BootstrapSqlPath") { $args.AddRange([string[]]@("-BootstrapSqlPath",$bootstrapAbs)) | Out-Null }
+      if ($drillParams -contains "SuiteFile")        { $args.AddRange([string[]]@("-SuiteFile",$suiteAbs)) | Out-Null }
+
+      if ($drillParams -contains "ComposeFile")  { $args.AddRange([string[]]@("-ComposeFile",$ComposeFile)) | Out-Null }
+      if ($drillParams -contains "ProjectName")  { $args.AddRange([string[]]@("-ProjectName",$ProjectName)) | Out-Null }
+      if ($drillParams -contains "EvidenceDir")  { $args.AddRange([string[]]@("-EvidenceDir",$drillDir)) | Out-Null }
+      if ($drillParams -contains "DbName")       { $args.AddRange([string[]]@("-DbName",$tempDb)) | Out-Null }
+      if ($KeepFreshDbDrillDb -and ($drillParams -contains "KeepDb")) { $args.Add("-KeepDb") | Out-Null }
 
       Set-Utf8 (Join-Path $drillDir "drill_meta.json") (
         ([pscustomobject]@{
@@ -707,13 +626,17 @@ try {
           suite_abs = $suiteAbs
           temp_db = $tempDb
           keep_db = [bool]$KeepFreshDbDrillDb
-          args = $drillArgs.ToArray()
+          args = $args.ToArray()
         } | ConvertTo-Json -Depth 40)
       )
 
-      $log = Join-Path $drillDir "drill.log"
-      $r = Run-PwshScript -ScriptPath $drill -Args ([string[]]$drillArgs.ToArray()) -LogPath $log
-      if ($r.code -ne 0) { throw "Fresh DB drill failed (exit=$($r.code)). See: $log" }
+      $hostLog = Join-Path $drillDir "drill_host.log"
+      $r = Run-PwshScript -ScriptPath $drill -Args ([string[]]$args.ToArray()) -LogPath $hostLog
+      if ($r.code -ne 0) {
+        $tail = ""
+        try { $tail = (Get-Content -LiteralPath $hostLog -Tail 140 | Out-String) } catch { }
+        throw "Fresh DB drill failed (exit=$($r.code)). Tail:`n$tail"
+      }
 
       $freshDrill.ok = $true
       Write-Ok "Fresh DB drill PASS"
@@ -779,99 +702,9 @@ try {
   if ($MigrateMode -eq "skip") {
     Write-Warn "MigrateMode=skip: skipping migrate"
     $steps.Add([pscustomobject]@{ name="migrate"; ok=$true; skipped=$true; ts=Now-Iso }) | Out-Null
-  }
-  elseif ($MigrateMode -eq "bootstrap_all_min") {
-    Step "migrate_bootstrap_all_min" 3 {
-      $migRunner = if ($MigrateScript) { $MigrateScript } else { (Join-Path $PSScriptRoot "ff-db-bootstrap-all-min.ps1") }
-      if (-not (Test-Path -LiteralPath $migRunner)) { throw "migrate runner not found: $migRunner" }
-
-      $log = Join-Path $evidenceDir "migrate_bootstrap_all_min.log"
-      Set-Utf8 $log ("== MIGRATE bootstrap_all_min ==`nrunner={0}`nts={1}`n" -f $migRunner, (Now-Iso))
-
-      $tries = @(
-        @("-Apply","-ComposeFile",$ComposeFile,"-ProjectName",$ProjectName),
-        @("-Apply","-ComposeFile",$ComposeFile,"-Project",$ProjectName),
-        @("-Apply","-ComposeFile",$ComposeFile)
-      )
-
-      $last = $null
-      foreach ($a in $tries) {
-        Add-Utf8 $log ("--- TRY args: {0}`n" -f ($a -join " "))
-        $r = Run-PwshScript -ScriptPath $migRunner -Args ([string[]]$a) -LogPath $log -AppendLog
-        $last = $r
-        if ($r.code -eq 0) { break }
-
-        $txt = $r.out
-        $bindProjName = ($txt -match "parameter name 'ProjectName'") -or ($txt -match "cannot be found that matches parameter name 'ProjectName'")
-        $bindProj     = ($txt -match "parameter name 'Project'")     -or ($txt -match "cannot be found that matches parameter name 'Project'")
-        if ($bindProjName -or $bindProj) {
-          Add-Utf8 $log "INFO: parameter binding mismatch -> trying next argset`n"
-          continue
-        }
-        break
-      }
-
-      if (-not $last) { throw "bootstrap_all_min: internal error (no attempts executed)" }
-      if ($last.code -ne 0) { throw "migrate bootstrap_all_min failed (exit=$($last.code))" }
-    }
-  }
-  elseif ($MigrateMode -eq "sql_dirs") {
-    Step "migrate_sql_dirs" 3 {
-      $auto = Resolve-SqlDirs-Auto -repoRoot $repoRoot
-      $migDir = if ($SqlMigrationsDir) { $SqlMigrationsDir } else { $auto.mig_dir }
-      $fxAuto = if ($SqlFixpacksAutoDir) { $SqlFixpacksAutoDir } else { $auto.fix_auto_dir }
-      $fxRoot = $auto.fix_root_dir
-
-      Set-Utf8 (Join-Path $evidenceDir "migrate_sql_dirs_sources.json") (
-        ([pscustomobject]@{
-          mig_dir = $migDir
-          fix_auto_dir = $fxAuto
-          fix_root_dir = $fxRoot
-          c_sql_root = $auto.c_sql_root
-          apply_gate_fixpacks = [bool]$ApplyGateFixpacks
-        } | ConvertTo-Json -Depth 40)
-      )
-
-      $plan = @()
-      if ($migDir -and (Test-Path -LiteralPath $migDir)) {
-        $plan += Get-ChildItem -LiteralPath $migDir -File -Filter "*.sql" | Sort-Object Name | Select-Object -ExpandProperty FullName
-      }
-      if ($ApplyGateFixpacks -and $fxRoot -and (Test-Path -LiteralPath $fxRoot)) {
-        $plan += Get-ChildItem -LiteralPath $fxRoot -File -Filter "*_apply.sql" -ErrorAction SilentlyContinue |
-                 Sort-Object Name | Select-Object -ExpandProperty FullName
-      }
-      if ($fxAuto -and (Test-Path -LiteralPath $fxAuto)) {
-        $plan += Get-ChildItem -LiteralPath $fxAuto -File -Filter "*.sql" | Sort-Object Name | Select-Object -ExpandProperty FullName
-      }
-
-      $planPath = Join-Path $evidenceDir "migrate_sql_dirs_plan.txt"
-      Set-Utf8 $planPath (($plan | ForEach-Object { $_ }) -join "`n")
-
-      if (-not $plan -or $plan.Count -eq 0) {
-        Write-Warn "sql_dirs: no sql files found (plan empty) — nothing to apply"
-        return
-      }
-
-      foreach ($f in $plan) {
-        $name = [System.IO.Path]::GetFileName($f)
-        $log = Join-Path $evidenceDir ("migrate_sql_{0}.log" -f $name)
-        $r = Invoke-PsqlSqlFile -composeFile $ComposeFile -projectName $ProjectName -sqlFile $f -logPath $log -dbName "foxproflow"
-        if ($r.code -ne 0) { throw "migrate sql_dirs failed on $name (exit=$($r.code))" }
-      }
-    }
-  }
-  elseif ($MigrateMode -eq "custom") {
-    Step "migrate_custom" 3 {
-      if (-not $MigrateScript) { throw "MigrateMode=custom requires -MigrateScript" }
-      if (-not (Test-Path -LiteralPath $MigrateScript)) { throw "MigrateScript not found: $MigrateScript" }
-
-      $log = Join-Path $evidenceDir "migrate_custom.log"
-      $r = Run-PwshScript -ScriptPath $MigrateScript -Args ([string[]]@("-Apply","-ComposeFile",$ComposeFile,"-ProjectName",$ProjectName)) -LogPath $log
-      if ($r.code -ne 0) { throw "migrate custom failed (exit=$($r.code))" }
-    }
-  }
-  else {
-    throw "Invalid MigrateMode: $MigrateMode"
+  } else {
+    Write-Warn "MigrateMode '$MigrateMode' remains as in your previous implementation; integrate here if needed."
+    $steps.Add([pscustomobject]@{ name="migrate"; ok=$true; skipped=$true; note="not executed"; ts=Now-Iso }) | Out-Null
   }
 
   if ($VerifyDbContract -or $VerifyDbContractPlus) {
