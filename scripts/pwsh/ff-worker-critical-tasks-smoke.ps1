@@ -10,7 +10,9 @@ Goal:
 Notes:
   - Uses "celery inspect ping" (more deterministic than "celery status").
   - Supports RequiredTasks (string[]) for direct invocation AND RequiredTasksCsv for pwsh -File.
+  - RequiredTasksCsv supports separators: comma, semicolon, newline.
   - Can optionally scan worker logs for "Received unregistered task".
+  - Robust against "container is restarting" (waits/retries with evidence).
 
 Lane: A-RUN only.
 Created by: Архитектор Яцков Евгений Анатольевич
@@ -38,7 +40,7 @@ param(
     "agents.kpi.report"
   ),
 
-  # Preferred for pwsh -File invocation: -RequiredTasksCsv "a;b;c"
+  # Preferred for pwsh -File invocation: -RequiredTasksCsv "a;b;c" or "a,b,c" or "a`nb`nc"
   [string]$RequiredTasksCsv = "",
 
   [int]$Retries = 10,
@@ -53,6 +55,8 @@ param(
   [string]$EvidenceDir = ""
 )
 
+$VERSION = "2025-12-27.det.v3"
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
@@ -63,8 +67,14 @@ function Now-Iso   { (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss.fffK") }
 function Repo-Root { (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path }
 
 function Ensure-Dir([string]$p) { if ($p) { New-Item -ItemType Directory -Force -Path $p | Out-Null } }
-function Set-Utf8([string]$Path, [string]$Text) { $d=Split-Path $Path -Parent; if($d){Ensure-Dir $d}; $Text | Set-Content -LiteralPath $Path -Encoding utf8NoBOM }
-function Add-Utf8([string]$Path, [string]$Text) { $d=Split-Path $Path -Parent; if($d){Ensure-Dir $d}; $Text | Add-Content -LiteralPath $Path -Encoding utf8NoBOM }
+function Set-Utf8([string]$Path, [string]$Text) {
+  $d=Split-Path $Path -Parent; if($d){Ensure-Dir $d}
+  ($Text ?? "") | Set-Content -LiteralPath $Path -Encoding utf8NoBOM
+}
+function Add-Utf8([string]$Path, [string]$Text) {
+  $d=Split-Path $Path -Parent; if($d){Ensure-Dir $d}
+  ($Text ?? "") | Add-Content -LiteralPath $Path -Encoding utf8NoBOM
+}
 
 function Log([string]$msg) { Write-Host ("[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $msg) }
 
@@ -72,6 +82,66 @@ function Resolve-ComposeFile([string]$repoRoot, [string]$composeFile) {
   if ([string]::IsNullOrWhiteSpace($composeFile)) { $composeFile = Join-Path $repoRoot "docker-compose.yml" }
   if (-not (Test-Path -LiteralPath $composeFile)) { throw "ComposeFile not found: $composeFile" }
   return (Resolve-Path -LiteralPath $composeFile).Path
+}
+
+function DcServices([string]$composeFile, [string]$projectName) {
+  $argv = @("compose","--ansi","never","-f",$composeFile)
+  if ($projectName) { $argv += @("-p",$projectName) }
+  $argv += @("config","--services")
+
+  $out = & docker @argv 2>&1
+  $code = $LASTEXITCODE
+  return [pscustomobject]@{ code=$code; out=($out|Out-String); argv=("docker " + ($argv -join " ")) }
+}
+
+function Extract-ServiceNames([string]$text) {
+  if ([string]::IsNullOrWhiteSpace($text)) { return @() }
+  $names = New-Object System.Collections.Generic.List[string]
+  foreach ($line in ($text -split '\r?\n')) {
+    $t = ($line ?? "").Trim()
+    if (-not $t) { continue }
+    # filter compose warnings; keep plausible service ids only
+    if ($t -match '^[A-Za-z0-9][A-Za-z0-9_-]*$') { $names.Add($t) | Out-Null }
+  }
+  return @($names.ToArray() | Sort-Object -Unique)
+}
+
+function DcPsQ([string]$composeFile, [string]$projectName, [string]$service) {
+  $argv = @("compose","--ansi","never","-f",$composeFile)
+  if ($projectName) { $argv += @("-p",$projectName) }
+  $argv += @("ps","-q",$service)
+
+  $out = & docker @argv 2>&1
+  $code = $LASTEXITCODE
+  $raw = ($out | Out-String)
+  $cid = $null
+
+  foreach ($ln in ($raw -split '\r?\n')) {
+    $t = ($ln ?? "").Trim()
+    if ($t -match '^[0-9a-f]{12,}$') { $cid = $t; break }
+  }
+
+  return [pscustomobject]@{ code=$code; out=$raw; argv=("docker " + ($argv -join " ")); cid=$cid }
+}
+
+function Inspect-ContainerState([string]$cid) {
+  if ([string]::IsNullOrWhiteSpace($cid)) { return [pscustomobject]@{ ok=$false; status=""; restarting=$false; exit_code=$null; oom=$false; error="" } }
+  try {
+    $fmt = "{{.State.Status}}|{{.State.Restarting}}|{{.State.ExitCode}}|{{.State.OOMKilled}}|{{.State.Error}}|{{.RestartCount}}"
+    $out = (& docker inspect -f $fmt $cid 2>&1 | Out-String).Trim()
+    $parts = $out -split '\|', 6
+    $status = $parts[0]
+    $restarting = (($parts[1] ?? "").Trim().ToLowerInvariant() -eq "true")
+    $exitCode = $null
+    try { $exitCode = [int](($parts[2] ?? "0").Trim()) } catch { $exitCode = $null }
+    $oom = (($parts[3] ?? "").Trim().ToLowerInvariant() -eq "true")
+    $err = ($parts[4] ?? "").Trim()
+    $rc = $null
+    try { $rc = [int](($parts[5] ?? "0").Trim()) } catch { $rc = $null }
+    return [pscustomobject]@{ ok=$true; status=$status; restarting=$restarting; exit_code=$exitCode; oom=$oom; error=$err; restart_count=$rc }
+  } catch {
+    return [pscustomobject]@{ ok=$false; status=""; restarting=$false; exit_code=$null; oom=$false; error=$_.Exception.Message; restart_count=$null }
+  }
 }
 
 function DcExec([string]$composeFile, [string]$projectName, [string]$service, [string[]]$cmd) {
@@ -82,11 +152,7 @@ function DcExec([string]$composeFile, [string]$projectName, [string]$service, [s
 
   $out = & docker @argv 2>&1
   $code = $LASTEXITCODE
-  return [pscustomobject]@{
-    code = $code
-    out  = ($out | Out-String)
-    argv = ("docker " + ($argv -join " "))
-  }
+  return [pscustomobject]@{ code=$code; out=($out|Out-String); argv=("docker " + ($argv -join " ")) }
 }
 
 function DcLogs([string]$composeFile, [string]$projectName, [string]$service, [string]$sinceArg) {
@@ -96,11 +162,7 @@ function DcLogs([string]$composeFile, [string]$projectName, [string]$service, [s
 
   $out = & docker @argv 2>&1
   $code = $LASTEXITCODE
-  return [pscustomobject]@{
-    code = $code
-    out  = ($out | Out-String)
-    argv = ("docker " + ($argv -join " "))
-  }
+  return [pscustomobject]@{ code=$code; out=($out|Out-String); argv=("docker " + ($argv -join " ")) }
 }
 
 function Contains-Pong([string]$text) {
@@ -125,7 +187,7 @@ function Extract-RegisteredTasks([string]$text) {
 function Detect-UnregisteredHits([string]$logsText) {
   if ([string]::IsNullOrWhiteSpace($logsText)) { return @() }
   $hits = New-Object System.Collections.Generic.List[string]
-  foreach ($line in ($logsText -split "`r?`n")) {
+  foreach ($line in ($logsText -split '\r?\n')) {
     if ($line -match 'Received unregistered task') { $hits.Add($line) | Out-Null }
   }
   return $hits.ToArray()
@@ -133,8 +195,9 @@ function Detect-UnregisteredHits([string]$logsText) {
 
 function Split-TasksCsv([string]$csv) {
   if ([string]::IsNullOrWhiteSpace($csv)) { return @() }
+  # IMPORTANT: use \r \n regex escapes (PowerShell backticks are NOT expanded inside single-quoted strings)
   return @(
-    ($csv -split '[,;`r`n]+' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    ($csv -split '[,;\r\n]+' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
   )
 }
 
@@ -158,10 +221,24 @@ if ([string]::IsNullOrWhiteSpace($EvidenceDir)) {
 Ensure-Dir $EvidenceDir
 Write-Output ("evidence: " + $EvidenceDir)
 
+# Compose services sanity (fail early if WorkerService wrong/missing)
+$svcLog = Join-Path $EvidenceDir "docker_compose_services.txt"
+$svc = DcServices -composeFile $ComposeFile -projectName $ProjectName
+Set-Utf8 $svcLog ("argv={0}`n`n{1}`nexit_code={2}`n" -f $svc.argv, $svc.out, $svc.code)
+if ($svc.code -ne 0) { throw "docker compose config --services failed (exit=$($svc.code)). See: $svcLog" }
+
+$composeServices = Extract-ServiceNames $svc.out
+Set-Utf8 (Join-Path $EvidenceDir "compose_services_extracted.txt") ((@($composeServices) -join "`n") + "`n")
+if (-not (@($composeServices) -contains $WorkerService)) {
+  throw "WorkerService '$WorkerService' not found in compose services. Found: $(@($composeServices) -join ', ')"
+}
+
 # Build tasks input from Csv (if provided) else from RequiredTasks
 $tasksIn = @()
+$tasksSource = "array"
 if (-not [string]::IsNullOrWhiteSpace($RequiredTasksCsv)) {
   $tasksIn = Split-TasksCsv $RequiredTasksCsv
+  $tasksSource = "csv"
 } else {
   $tasksIn = @($RequiredTasks)
 }
@@ -174,36 +251,69 @@ $RequiredTasks = @(
     Sort-Object -Unique
 )
 if (@($RequiredTasks).Count -eq 0) { throw "RequiredTasks is empty after sanitize." }
+Set-Utf8 (Join-Path $EvidenceDir "required_tasks_sanitized.txt") ((@($RequiredTasks) -join "`n") + "`n")
 
+Log ("WorkerTasksSmoke: version={0}" -f $VERSION)
 Log ("WorkerTasksSmoke: service={0} app={1}" -f $WorkerService, $CeleryApp)
-Log ("WorkerTasksSmoke: required={0}" -f (@($RequiredTasks) -join ", "))
+Log ("WorkerTasksSmoke: required({0})={1}" -f $tasksSource, (@($RequiredTasks) -join ", "))
 Log ("WorkerTasksSmoke: retries={0} sleep={1} ping_t={2} inspect_t={3}" -f $Retries, $SleepSec, $PingTimeoutSec, $InspectTimeoutSec)
 if ($CheckUnregisteredInLogs) { Log ("WorkerTasksSmoke: log_check=on since={0}m" -f $LogsSinceMin) }
 
 $ok = $false
 $exitCode = 1
 $failReason = ""
+$failStage = ""
+$attemptsUsed = 0
 $workerName = ""
 $missing = @()
 $unregisteredHits = @()
 
 $pingLog = Join-Path $EvidenceDir "celery_ping.log"
 $regLog  = Join-Path $EvidenceDir "celery_inspect_registered.log"
+$stateLog = Join-Path $EvidenceDir "worker_container_state.log"
 $sumPath = Join-Path $EvidenceDir "summary.json"
 
-Set-Utf8 $pingLog ("ts={0}`n" -f (Now-Iso))
-Set-Utf8 $regLog  ("ts={0}`n" -f (Now-Iso))
+Set-Utf8 $pingLog  ("ts={0}`n" -f (Now-Iso))
+Set-Utf8 $regLog   ("ts={0}`n" -f (Now-Iso))
+Set-Utf8 $stateLog ("ts={0}`n" -f (Now-Iso))
 
 try {
   for ($i=1; $i -le $Retries; $i++) {
+    $attemptsUsed = $i
+
+    # Check container state first (avoid exec while restarting)
+    $q = DcPsQ -composeFile $ComposeFile -projectName $ProjectName -service $WorkerService
+    Add-Utf8 $stateLog ("--- attempt {0}/{1} ts={2} ---`nargv={3}`nexit_code={4}`nraw={5}`ncontainer_id={6}`n" -f `
+      $i, $Retries, (Now-Iso), $q.argv, $q.code, $q.out.Trim(), ($q.cid ?? ""))
+
+    if ([string]::IsNullOrWhiteSpace($q.cid)) {
+      $failStage = "worker_container_missing"
+      $failReason = "worker container id not found (docker compose ps -q returned empty)"
+      Start-Sleep -Seconds $SleepSec
+      continue
+    }
+
+    $st = Inspect-ContainerState -cid $q.cid
+    Add-Utf8 $stateLog ("state: ok={0} status={1} restarting={2} exit={3} oom={4} restarts={5} error={6}`n" -f `
+      $st.ok, $st.status, $st.restarting, $st.exit_code, $st.oom, $st.restart_count, $st.error)
+
+    if (-not $st.ok -or $st.restarting -or ($st.status -ne "running")) {
+      $failStage = "worker_container_not_ready"
+      $failReason = "worker container not ready (status=$($st.status) restarting=$($st.restarting) exit=$($st.exit_code))"
+      Start-Sleep -Seconds $SleepSec
+      continue
+    }
+
     Log ("Attempt {0}/{1}: celery inspect ping ..." -f $i, $Retries)
 
     $ping = DcExec -composeFile $ComposeFile -projectName $ProjectName -service $WorkerService -cmd @(
       "celery","-A",$CeleryApp,"inspect","ping","--timeout",$PingTimeoutSec
     )
-    Add-Utf8 $pingLog ("--- attempt {0}/{1} ts={2} ---`nargv={3}`nexit_code={4}`n`n{5}`n" -f $i, $Retries, (Now-Iso), $ping.argv, $ping.code, $ping.out)
+    Add-Utf8 $pingLog ("--- attempt {0}/{1} ts={2} ---`nargv={3}`nexit_code={4}`n`n{5}`n" -f `
+      $i, $Retries, (Now-Iso), $ping.argv, $ping.code, $ping.out)
 
     if ($ping.code -ne 0 -or -not (Contains-Pong $ping.out)) {
+      $failStage = "ping"
       $failReason = "ping failed or no pong replies (exit=$($ping.code))"
       Start-Sleep -Seconds $SleepSec
       continue
@@ -222,6 +332,7 @@ try {
       $i, $Retries, (Now-Iso), $ins.argv, $ins.code, $workerName, $ins.out)
 
     if ($ins.code -ne 0 -or [string]::IsNullOrWhiteSpace($ins.out)) {
+      $failStage = "inspect_registered"
       $failReason = "inspect registered failed or empty output (exit=$($ins.code))"
       Start-Sleep -Seconds $SleepSec
       continue
@@ -239,6 +350,7 @@ try {
     }
 
     if (@($missing).Count -gt 0) {
+      $failStage = "missing_tasks"
       Set-Utf8 (Join-Path $EvidenceDir "missing_tasks.txt") ((@($missing) -join "`n") + "`n")
       $failReason = "Missing required tasks: " + (@($missing) -join ", ")
       Log ("WARN: {0}" -f $failReason)
@@ -253,6 +365,7 @@ try {
 
       $unregisteredHits = @(Detect-UnregisteredHits $lg.out)
       if (@($unregisteredHits).Count -gt 0) {
+        $failStage = "unregistered_hits"
         Set-Utf8 (Join-Path $EvidenceDir "unregistered_hits.txt") ((@($unregisteredHits) -join "`n") + "`n")
         $failReason = "Found 'Received unregistered task' in worker logs (last ${LogsSinceMin}m)"
         Log ("WARN: {0}" -f $failReason)
@@ -264,16 +377,19 @@ try {
     $ok = $true
     $exitCode = 0
     $failReason = ""
+    $failStage = ""
     break
   }
 
   if (-not $ok -and [string]::IsNullOrWhiteSpace($failReason)) {
+    $failStage = "timeout"
     $failReason = "Timeout: criteria not met"
   }
 }
 catch {
   $ok = $false
   $exitCode = 1
+  $failStage = "exception"
   $failReason = $_.Exception.Message
   try { Set-Utf8 (Join-Path $EvidenceDir "error.txt") ($_.Exception.ToString()) } catch {}
 }
@@ -284,25 +400,42 @@ if ($summaryExit -eq 0 -and -not $ok) { $summaryExit = 1 }
 
 $summary = [pscustomobject]@{
   ts = Now-Iso
+  version = $VERSION
+  release_id = $ReleaseId
   ok = [bool]$ok
   exit_code = [int]$summaryExit
+  fail_stage = [string]$failStage
   fail_reason = [string]$failReason
+
   compose_file = $ComposeFile
   project_name = $ProjectName
+  compose_services = @($composeServices)
+
   worker_service = $WorkerService
   celery_app = $CeleryApp
   worker_name = $workerName
+
+  required_tasks_source = $tasksSource
   required_tasks = @($RequiredTasks)
   required_tasks_csv = $RequiredTasksCsv
+
+  attempts_used = [int]$attemptsUsed
+  retries = [int]$Retries
+  sleep_sec = [int]$SleepSec
+  ping_timeout_sec = [int]$PingTimeoutSec
+  inspect_timeout_sec = [int]$InspectTimeoutSec
+
   missing_tasks = @($missing)
   missing_tasks_cnt = [int](@($missing).Count)
+
   check_unregistered_logs = [bool]$CheckUnregisteredInLogs
   logs_since_min = [int]$LogsSinceMin
   unregistered_hits_cnt = [int](@($unregisteredHits).Count)
+
   evidence_dir = $EvidenceDir
 }
 
-try { Set-Utf8 $sumPath (($summary | ConvertTo-Json -Depth 40)) } catch {}
+try { Set-Utf8 $sumPath (($summary | ConvertTo-Json -Depth 80)) } catch {}
 
 if ($ok) {
   Log "OK: WorkerTasksSmoke PASS"
