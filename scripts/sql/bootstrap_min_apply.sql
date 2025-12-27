@@ -19,7 +19,7 @@
 
 -- 4) DevFactory baseline + KPI MV definition (DDL only, no refresh inside patch!)
 \ir fixpacks/20251224_m0_devfactory_contract_apply.sql
-\ir patches/20251212_analytics_devfactory_task_kpi_v2.sql
+\ir fixpacks/20251227_analytics_devfactory_task_kpi_v2_ddl_apply.sql
 
 -- 4a) CRITICAL: first populate KPI MV WITHOUT CONCURRENTLY (Postgres requirement)
 \echo INFO: first populate analytics.devfactory_task_kpi_v2 (no CONCURRENTLY)
@@ -32,3 +32,4 @@ ANALYZE analytics.devfactory_task_kpi_v2;
 \echo '---'
 \echo 'BOOTSTRAP MIN APPLY DONE'
 \echo '---'
+
