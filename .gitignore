@@ -16,14 +16,31 @@ venv/
 env/
 
 # ====================================
+# Node / Frontend (на будущее)
+# ====================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tsbuildinfo
+.next/
+.nuxt/
+.svelte-kit/
+.vite/
+.parcel-cache/
+
+# ====================================
 # IDE / ОС
 # ====================================
 .idea/
 .vscode/
 *.iml
+*.code-workspace
 .DS_Store
 Thumbs.db
 desktop.ini
+__MACOSX/
 
 # ====================================
 # Кеши и тестовые артефакты
@@ -34,12 +51,17 @@ desktop.ini
 .ipynb_checkpoints/
 .coverage*
 htmlcov/
+.tox/
+.nox/
+.cache/
 
 # Временные/бэкап файлы редакторов
 *.swp
 *.swo
 *.tmp
 *.bak
+*.orig
+*.rej
 
 # ====================================
 # Базы и кеши
@@ -50,6 +72,10 @@ data/models/
 *.sqlite3
 *.db-journal
 *.db
+
+# OSRM / тяжёлые датасеты (не в репо)
+data/osrm/**
+!data/osrm/.gitkeep
 
 # ====================================
 # Парсер: рабочие артефакты (не в репо)
@@ -91,6 +117,7 @@ src/parsers/chrome_profile_freights/**
 src/parsers/chrome_profile_transport/
 src/parsers/chrome_profile_transport/**
 src/parsers/chrome_profile_loads/
+src/parsers/chrome_profile_loads/**
 
 # Логи
 *.log
@@ -102,26 +129,44 @@ chromedriver*.log
 geckodriver.log
 
 # ====================================
-# Скриншоты / изображения
+# Скриншоты / изображения (игнорим только сырьё/захваты)
 # ====================================
 screenshots/
 screens/
 img/raw/
 images/raw/
-*.png
-*.jpg
-*.jpeg
-*.gif
-*.bmp
-*.webp
-*.tiff
 
 # ====================================
-# Локальные конфиги
+# Локальные конфиги / secrets (не в репо)
 # ====================================
 .env
 .env.*
 !.env.example
+
+# отдельный secrets файл (часто используется в compose)
+.secrets.env
+.secrets.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+*.jks
+*.keystore
+
+# ====================================
+# Ops / DR / Evidence (локальные артефакты)
+# ====================================
+# backup дампы и evidence должны жить локально (коммитим только вручную/точечно через git add -f)
+ops/_backups/**
+ops/_local/evidence/**
+ops/session/**
+
+# (опционально) разрешить “золотые” доказательства, если решим хранить их в репо
+!ops/_local/evidence/_golden/**
+!ops/_local/evidence/_canon/**
 
 # ====================================
 # Инвентаризационные отчёты (внутренние)
@@ -133,6 +178,7 @@ project_largefiles.csv
 
 # Celery schedule DB
 celerybeat-schedule
+celerybeat-schedule.db
 
 # Глобально разрешаем .gitkeep в любых игнорируемых папках
 !**/.gitkeep
@@ -142,7 +188,7 @@ _contextpacks/
 _flowmeta/
 
 # --- FlowSec (gate scripts must be versioned) ---
-!scripts/pwsh/sec/
-!scripts/pwsh/sec/ff-sec-scan-secrets.ps1
-!scripts/pwsh/sec/ff-sec-allowlist.txt
+# Gate-скрипты должны быть В РЕПО. Игнорим только их локальные выходы (если появятся).
+scripts/pwsh/sec/_local/
+scripts/pwsh/sec/_out/
 # ----------------------------------------------

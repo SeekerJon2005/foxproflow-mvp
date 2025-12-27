@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: ${FF_DRILL_PG_USER:-postgres}
+      POSTGRES_DB: ${FF_DRILL_PG_DB:-postgres}
+      POSTGRES_PASSWORD: ${FF_DRILL_PG_PASSWORD:-drill}
+    volumes:
+      - pgdata_drill:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+volumes:
+  pgdata_drill:
