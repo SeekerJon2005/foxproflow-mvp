@@ -22,7 +22,7 @@ Notes:
   - All unknown params are passed through to ff-release-m0.ps1.
 #>
 
-[CmdletBinding(PositionalBinding=$false)]
+[CmdletBinding(PositionalBinding = $false)]
 param(
   [switch]$CaptureOnFail = $true,
 
@@ -35,9 +35,9 @@ param(
   [switch]$ContextOpenOutDir,
 
   [int]$ContextDockerLogsTail = 250,
-  [string[]]$ContextDockerLogServices = @("api","worker","beat"),
+  [string[]]$ContextDockerLogServices = @("api", "worker", "beat"),
 
-  [Parameter(ValueFromRemainingArguments=$true)]
+  [Parameter(ValueFromRemainingArguments = $true)]
   [string[]]$PassThruArgs
 )
 
@@ -56,8 +56,15 @@ Write-Info "CaptureOnFail: $CaptureOnFail"
 Write-Info "PassThruArgs: $($PassThruArgs.Count)"
 
 # Run inner gate in child pwsh to survive 'exit' inside ff-release-m0.ps1
-& $pwshExe -NoProfile -File $inner @PassThruArgs
-$exitCode = $LASTEXITCODE
+$exitCode = 1
+try {
+  & $pwshExe -NoProfile -File $inner @PassThruArgs
+  $exitCode = $LASTEXITCODE
+  if ($null -eq $exitCode) { $exitCode = 1 }
+} catch {
+  Write-Warn "Inner execution failed: $($_.Exception.Message)"
+  $exitCode = 1
+}
 
 if ($exitCode -eq 0) {
   Write-Info "Release gate OK (exitCode=0)."
@@ -73,12 +80,21 @@ if (-not $CaptureOnFail) {
 
 Write-Info "Capturing FlowMeta evidence..."
 
+# -------------------------
 # Scoreboard (best effort)
+# -------------------------
 $scoreScript = Join-Path $PSScriptRoot "ff-flowmeta-scoreboard.ps1"
 if (Test-Path $scoreScript) {
   try {
+    # Let scoreboard decide how to query health. We just pass parameters.
     & $scoreScript -SinceHours $ContextSinceHours -ApiBase $ApiBase -ComposeFile $ComposeFile | Out-Null
-    Write-Info "Scoreboard saved: $(Join-Path (Get-Location).Path '_flowmeta\latest_scoreboard.json')"
+
+    $scoreLatest = Join-Path (Get-Location).Path "_flowmeta\latest_scoreboard.json"
+    if (Test-Path $scoreLatest) {
+      Write-Info "Scoreboard saved: $scoreLatest"
+    } else {
+      Write-Warn "Scoreboard ran, but latest file not found: $scoreLatest"
+    }
   } catch {
     Write-Warn "Scoreboard failed: $($_.Exception.Message)"
   }
@@ -86,38 +102,53 @@ if (Test-Path $scoreScript) {
   Write-Warn "Scoreboard script not found: $scoreScript"
 }
 
+# -------------------------
 # Context Pack (best effort)
+# -------------------------
 $ctxScript = Join-Path $PSScriptRoot "ff-context-pack.ps1"
 if (Test-Path $ctxScript) {
   try {
-    $ctxArgs = @(
-      "-SinceHours", "$ContextSinceHours",
-      "-ApiBase", $ApiBase,
-      "-ComposeFile", $ComposeFile,
-      "-DockerLogsTail", "$ContextDockerLogsTail"
-    )
+    # IMPORTANT FIX:
+    # Do NOT pass parameter names as strings in an array (PowerShell treats them as positional values).
+    # Use splatting (hashtable) to bind by parameter name correctly.
+    $ctxOutDir = Join-Path (Get-Location).Path "_contextpacks"
 
-    if ($ContextDockerLogServices -and $ContextDockerLogServices.Count -gt 0) {
-      $ctxArgs += @("-DockerLogServices") + $ContextDockerLogServices
+    $ctxSplat = @{
+      SinceHours        = $ContextSinceHours
+      ApiBase           = $ApiBase
+      ComposeFile       = $ComposeFile
+      OutDir            = $ctxOutDir
+      DockerLogsTail    = $ContextDockerLogsTail
+      DockerLogServices = $ContextDockerLogServices
     }
-    if ($ContextIncludeDockerLogs) { $ctxArgs += "-IncludeDockerLogs" }
-    if ($ContextIncludeEnvSnapshot) { $ctxArgs += "-IncludeEnvSnapshot" }
-    if ($ContextOpenOutDir) { $ctxArgs += "-OpenOutDir" }
 
-    $out = & $ctxScript @ctxArgs 2>&1
+    if ($ContextIncludeDockerLogs)  { $ctxSplat["IncludeDockerLogs"]  = $true }
+    if ($ContextIncludeEnvSnapshot) { $ctxSplat["IncludeEnvSnapshot"] = $true }
+    if ($ContextOpenOutDir)         { $ctxSplat["OpenOutDir"]         = $true }
 
-    $zipPath = $null
-    $runDir = $null
+    # We don't rely on capturing Write-Host output from ff-context-pack.ps1;
+    # instead, we locate the newest artifacts in OutDir after execution.
+    & $ctxScript @ctxSplat | Out-Null
 
-    $zipLine = $out | Where-Object { $_ -match '^Zip:\s*' } | Select-Object -Last 1
-    if ($zipLine -and ($zipLine -match '^Zip:\s*(.+)$')) { $zipPath = $Matches[1] }
+    $zip = $null
+    $dir = $null
 
-    $runLine = $out | Where-Object { $_ -match '^RunDir:\s*' } | Select-Object -Last 1
-    if ($runLine -and ($runLine -match '^RunDir:\s*(.+)$')) { $runDir = $Matches[1] }
+    if (Test-Path $ctxOutDir) {
+      $zip = Get-ChildItem -Path $ctxOutDir -File -Filter "ctx_*.zip" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -First 1
 
-    if ($runDir)  { Write-Info "ContextPack RunDir: $runDir" }
-    if ($zipPath) { Write-Info "ContextPack Zip:    $zipPath" }
-    if (-not $zipPath) { Write-Warn "ContextPack done, but zip path not parsed (see output above)." }
+      $dir = Get-ChildItem -Path $ctxOutDir -Directory -Filter "ctx_*" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -First 1
+    }
+
+    if ($dir) { Write-Info "ContextPack RunDir: $($dir.FullName)" }
+    if ($zip) { Write-Info "ContextPack Zip:    $($zip.FullName)" }
+
+    if (-not $zip) {
+      Write-Warn "ContextPack finished, but no ctx_*.zip found in: $ctxOutDir"
+    }
   } catch {
     Write-Warn "ContextPack failed: $($_.Exception.Message)"
   }

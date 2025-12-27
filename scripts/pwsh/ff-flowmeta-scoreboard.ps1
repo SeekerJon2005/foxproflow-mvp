@@ -7,10 +7,11 @@ Goal:
   Fast scoreboard snapshot (local + docker + API):
     - git branch/dirty + commits since last N hours
     - docker compose ps -a (raw)
-    - /health/extended (JSON)
-  Save:
-    - _flowmeta\latest_scoreboard.json (pretty)
-    - _flowmeta\scoreboard.jsonl (append, 1 line per run)
+    - API health JSON (prefer /health/extended, fallback to /health/extended2, then /health)
+
+Save:
+  - _flowmeta\latest_scoreboard.json (pretty)
+  - _flowmeta\scoreboard.jsonl (append, 1 line per run)
 
 Safe:
   - no secret env values collected
@@ -47,7 +48,9 @@ function Try-HttpJson([string]$url) {
     $obj = Invoke-RestMethod -Method Get -Uri $url -TimeoutSec 8
     return @{ ok = $true; data = $obj; err = $null }
   } catch {
-    return @{ ok = $false; data = $null; err = $_.Exception.Message }
+    # Keep it concise (no secrets), but actionable.
+    $msg = $_.Exception.Message
+    return @{ ok = $false; data = $null; err = $msg }
   }
 }
 
@@ -75,8 +78,23 @@ $gitLast = (Try-Run { git log -1 --pretty=format:"%h|%ad|%an|%s" --date=iso-stri
 # --- Docker compose ps
 $dockerPs = Try-Run { docker compose --ansi never -f $ComposeFile ps -a }
 
-# --- API health
+# --- API health (prefer /health/extended, fallback to /health/extended2, then /health)
+$healthSource = "/health/extended"
 $h = Try-HttpJson -url ("$ApiBase/health/extended")
+
+if (-not $h.ok) {
+  $h2 = Try-HttpJson -url ("$ApiBase/health/extended2")
+  if ($h2.ok) {
+    $h = $h2
+    $healthSource = "/health/extended2"
+  } else {
+    $h3 = Try-HttpJson -url ("$ApiBase/health")
+    if ($h3.ok) {
+      $h = $h3
+      $healthSource = "/health"
+    }
+  }
+}
 
 $score = [ordered]@{
   rid          = $rid
@@ -96,6 +114,7 @@ $score = [ordered]@{
   }
   api          = [ordered]@{
     base          = $ApiBase
+    health_path   = $healthSource
     health_ok     = [bool]$h.ok
     health_error  = $h.err
     health_data   = $h.data
@@ -115,12 +134,13 @@ Write-Host ""
 Write-Host "=== SCOREBOARD SUMMARY ===" -ForegroundColor Green
 Write-Host ("Git: branch={0} dirty={1} commits({2}h)={3}" -f $gitBranch, $gitDirty, $SinceHours, $gitCommitCount)
 Write-Host ("Docker: compose ps captured -> {0} lines" -f (($dockerPs | Measure-Object).Count))
-Write-Host ("API /health/extended: ok={0}" -f [bool]$h.ok)
+Write-Host ("API {0}: ok={1}" -f $healthSource, [bool]$h.ok)
+
 if ($h.ok -and $null -ne $h.data) {
   try {
-    if ($null -ne $h.data.queue_len)     { Write-Host ("  queue_len: {0}" -f $h.data.queue_len) }
-    if ($null -ne $h.data.beat_age_sec)  { Write-Host ("  beat_age_sec: {0}" -f $h.data.beat_age_sec) }
-    if ($null -ne $h.data.queue_busy_streak_min) { Write-Host ("  queue_busy_streak_min: {0}" -f $h.data.queue_busy_streak_min) }
+    if ($null -ne $h.data.queue_len)            { Write-Host ("  queue_len: {0}" -f $h.data.queue_len) }
+    if ($null -ne $h.data.beat_age_sec)         { Write-Host ("  beat_age_sec: {0}" -f $h.data.beat_age_sec) }
+    if ($null -ne $h.data.queue_busy_streak_min){ Write-Host ("  queue_busy_streak_min: {0}" -f $h.data.queue_busy_streak_min) }
   } catch { }
 } elseif (-not $h.ok) {
   Write-Warn ("API error: {0}" -f $h.err)
