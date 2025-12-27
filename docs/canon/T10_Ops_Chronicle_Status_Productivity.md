@@ -1,6 +1,6 @@
 # FoxProFlow CANON — T10 • Ops Chronicle / Status / Productivity
 
-## T10 (Canon) • Версия v1.1 • Дата: 2025-12-27
+## T10 (Canon) • Версия v1.2 • Дата: 2025-12-27
 
 **Создал:** Архитектор Яцков Евгений Анатольевич  
 **Доступ:** Архитектор Яцков Евгений Анатольевич  
@@ -11,6 +11,13 @@
 ## 0) Назначение тома (один абзац)
 
 Этот том — “операционная память” FoxProFlow: фиксирует реальность (Current State), боевые факты (RAW), выжимки (DIGEST), решения (DecisionLog) и продуктивность/баланс. В отличие от T1–T9 (как должно быть), T10 описывает **как было и как есть** — с датами и доказательствами.
+
+---
+
+## 0.1 Changelog
+
+- v1.1 (2025-12-27): зафиксирован DR-контур (backup/restore/restore-drill PASS), добавлены Ops-уроки ($args pitfall, pg-only drill).
+- v1.2 (2025-12-27): включён weekly restore-drill через Task Scheduler, добавлены evidence paths и политика ретеншна/DoD для DR.
 
 ---
 
@@ -73,25 +80,62 @@ DIGEST отвечает:
 
 ---
 
+### 2.3 Снапшот: WeeklyRestoreDrill (Task Scheduler) — ENABLED + PASS
+**Дата фиксации:** 2025-12-27
+
+**Факт:** включён регулярный weekly restore-drill через Windows Task Scheduler.
+
+**Task:**
+- Имя: `FoxProFlow\WeeklyRestoreDrill`
+- Schedule: WEEKLY, SUN 07:30
+- Wrapper script: `C:\Users\Evgeniy\projects\foxproflow-wt\A-run\scripts\pwsh\ff-sched-weekly-restore-drill.ps1`
+
+**Проверка исполнения:**
+- `Get-ScheduledTaskInfo` показал: `LastTaskResult = 0` (успех), `NextRunTime = 28.12.2025 07:30:00`
+
+**Scheduler log (локальный):**
+- `ops/_local/evidence/_scheduler/weekly_restore_drill.log`
+
+**Evidence (test run):**
+- `ops/_local/evidence/restore_drill_20251227_222736` — PASS (restore + db checks + down -v)
+
+---
+
 ## 3) Боевые факты / Chronicle (append-only)
 
-### 2025-12-27 — DR restore-drill PASS
+### 2025-12-27 — DR restore-drill PASS (manual run)
 - **Команда:** `pwsh -NoProfile -File scripts/pwsh/ff-restore-drill.ps1`
 - **Результат:** PASS (restore + checks + down -v)
 - **Evidence:** `ops/_local/evidence/restore_drill_20251227_213325`
 - **Примечание:** подтверждено в терминале строками `RESTORE OK` и `RESTORE-DRILL OK`.
 
+### 2025-12-27 — WeeklyRestoreDrill PASS (Task Scheduler test run)
+- **Task:** `FoxProFlow\WeeklyRestoreDrill`
+- **Результат:** PASS (`LastTaskResult=0`)
+- **Scheduler log:** `ops/_local/evidence/_scheduler/weekly_restore_drill.log`
+- **Evidence:** `ops/_local/evidence/restore_drill_20251227_222736`
+
 ---
 
 ## 4) Ops Roadmap (операционные next steps)
 
-### 4.1 P0 (сразу после PASS)
-1) Зафиксировать и закоммитить DR-пакет A-run (скрипты + pg-drill compose + T10 каноны + .gitignore).  
-2) Добавить weekly restore-drill (Task Scheduler) + сохранять evidence (summary+digest).
+### 4.1 P0 DONE (закрыто фактами)
+- [x] DR-пакет A-run: backup/restore/restore-drill + pg-only drill compose + T10 каноны + .gitignore.
+- [x] Стабилизация cold-start worker smoke (увеличены retries/timeouts, добавлена готовность/ожидание).
+- [x] Weekly restore-drill в Task Scheduler + успешный test run.
 
-### 4.2 P1
+### 4.2 P0 NEXT (следующие шаги)
+1) Закоммитить wrapper-скрипт планировщика (если ещё не зафиксирован в git):  
+   `scripts/pwsh/ff-sched-weekly-restore-drill.ps1`
+2) Политика ретеншна:
+   - держать N последних backup’ов (например 14–30),
+   - держать N последних restore_drill evidence (например 30),
+   - контролировать объём `ops/_backups` и `ops/_local/evidence`.
+3) Опционально: добавить “DR drill PASS within last 7 days” как soft-gate в release-m0.
+
+### 4.3 P1
 - Укрепить smoke-порядок релиза (waiting “running && not restarting” и т.п.).
-- Канонизировать Release Gate (build→migrate→deploy→smoke→rollback) как исполнимый runbook.
+- Канонизировать Release Gate (build→migrate→deploy→smoke→rollback) как исполнимый runbook + evidence.
 
 ---
 
@@ -114,6 +158,11 @@ DIGEST отвечает:
 **Почему:** там могут быть дампы/PII/секреты и просто тяжёлые файлы.  
 **Статус:** active.
 
+### DEC.2025-12-27.004 (OPS) — Weekly restore-drill через Task Scheduler (обязательная регулярность)
+**Суть:** DR проверяется автоматически по расписанию (`FoxProFlow\WeeklyRestoreDrill`), результат фиксируется в `_scheduler` логе и в evidence папке restore_drill.  
+**Почему:** DR без регулярной проверки деградирует в “непроверенный ритуал”.  
+**Статус:** active.
+
 ---
 
 ## 6) Приложения
@@ -129,5 +178,13 @@ DIGEST отвечает:
 - Итог:
 - Next steps:
 - Evidence paths:
+
+### 6.2 Команды-референсы (операторские)
+- Manual restore-drill:
+  - `pwsh -NoProfile -File scripts/pwsh/ff-restore-drill.ps1`
+- Task status:
+  - `Get-ScheduledTaskInfo -TaskPath "\FoxProFlow\" -TaskName "WeeklyRestoreDrill" | Select LastRunTime,LastTaskResult,NextRunTime`
+- Scheduler log:
+  - `Get-Content ops/_local/evidence/_scheduler/weekly_restore_drill.log -Tail 120`
 
 ---

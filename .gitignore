@@ -1,5 +1,5 @@
 # ====================================
-# Python ╨░╤А╤В╨╡╤Д╨░╨║╤В╤Л ╨╕ ╨╛╨║╤А╤Г╨╢╨╡╨╜╨╕╤П
+# Python артефакты и окружения
 # ====================================
 __pycache__/
 *.py[cod]
@@ -7,16 +7,23 @@ __pycache__/
 *.pyd
 *.so
 *.egg-info/
+*.egg
 dist/
 build/
+pip-wheel-metadata/
+*.whl
+__pypackages__/
+.cache/
 
-# ╨Т╨╕╤А╤В╤Г╨░╨╗╤М╨╜╤Л╨╡ ╨╛╨║╤А╤Г╨╢╨╡╨╜╨╕╤П
+# Виртуальные окружения
 .venv/
 venv/
 env/
+.conda/
+conda/
 
 # ====================================
-# Node / Frontend (╨╜╨░ ╨▒╤Г╨┤╤Г╤Й╨╡╨╡)
+# Node / Frontend (на будущее)
 # ====================================
 node_modules/
 npm-debug.log*
@@ -31,10 +38,11 @@ pnpm-debug.log*
 .parcel-cache/
 
 # ====================================
-# IDE / ╨Ю╨б
+# IDE / ОС
 # ====================================
 .idea/
 .vscode/
+.vs/
 *.iml
 *.code-workspace
 .DS_Store
@@ -42,20 +50,7 @@ Thumbs.db
 desktop.ini
 __MACOSX/
 
-# ====================================
-# ╨Ъ╨╡╤И╨╕ ╨╕ ╤В╨╡╤Б╤В╨╛╨▓╤Л╨╡ ╨░╤А╤В╨╡╤Д╨░╨║╤В╤Л
-# ====================================
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.ipynb_checkpoints/
-.coverage*
-htmlcov/
-.tox/
-.nox/
-.cache/
-
-# ╨Т╤А╨╡╨╝╨╡╨╜╨╜╤Л╨╡/╨▒╤Н╨║╨░╨┐ ╤Д╨░╨╣╨╗╤Л ╤А╨╡╨┤╨░╨║╤В╨╛╤А╨╛╨▓
+# Временные/бэкап файлы редакторов
 *.swp
 *.swo
 *.tmp
@@ -64,7 +59,21 @@ htmlcov/
 *.rej
 
 # ====================================
-# ╨С╨░╨╖╤Л ╨╕ ╨║╨╡╤И╨╕
+# Кеши и тестовые артефакты
+# ====================================
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.coverage*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+junit*.xml
+
+# ====================================
+# Базы и кеши
 # ====================================
 data/db/pgdata/
 data/cache/
@@ -72,13 +81,25 @@ data/models/
 *.sqlite3
 *.db-journal
 *.db
+*.rdb
 
-# OSRM / ╤В╤П╨╢╤С╨╗╤Л╨╡ ╨┤╨░╤В╨░╤Б╨╡╤В╤Л (╨╜╨╡ ╨▓ ╤А╨╡╨┐╨╛)
+# ====================================
+# Артефакты и авто-генерация (НЕ в репо)
+# ====================================
+artifacts/
+scripts/sql/fixpacks/auto/
+
+# Celery schedule DB
+celerybeat-schedule
+celerybeat-schedule.db
+celerybeat.pid
+
+# OSRM / тяжёлые датасеты (не в репо)
 data/osrm/**
 !data/osrm/.gitkeep
 
 # ====================================
-# ╨Я╨░╤А╤Б╨╡╤А: ╤А╨░╨▒╨╛╤З╨╕╨╡ ╨░╤А╤В╨╡╤Д╨░╨║╤В╤Л (╨╜╨╡ ╨▓ ╤А╨╡╨┐╨╛)
+# Парсер: рабочие артефакты (не в репо)
 # ====================================
 
 # Cookies
@@ -86,10 +107,10 @@ src/parsers/ati_cookies.json
 src/parsers/auth/cookies/
 src/parsers/auth/cookies/**
 
-# ╨а╨╡╨╖╤Г╨╗╤М╤В╨░╤В╤Л ╨┐╨░╤А╤Б╨╕╨╜╨│╨░ (jsonl)
+# Результаты парсинга (jsonl)
 *.jsonl
 
-# ╨Ъ╨░╤В╨░╨╗╨╛╨│╨╕ ╨┤╨░╨╜╨╜╤Л╤Е (╨╛╤Б╤В╨░╨▓╨╗╤П╨╡╨╝ .gitkeep ╨┤╨╗╤П ╤Б╤В╤А╤Г╨║╤В╤Г╤А╤Л)
+# Каталоги данных (оставляем .gitkeep для структуры)
 src/parsers/regions_data_trucks/*
 !src/parsers/regions_data_trucks/.gitkeep
 
@@ -102,12 +123,12 @@ src/parsers/data/*
 src/parsers/data_transport/*
 !src/parsers/data_transport/.gitkeep
 
-# ╨Я╤А╨╛╨│╤А╨╡╤Б╤Б/╤Б╨╗╤Г╨╢╨╡╨▒╨╜╤Л╨╡ ╤Д╨░╨╣╨╗╤Л
+# Прогресс/служебные файлы
 src/parsers/car_filter_progress.json
 src/parsers/region_progress_trucks.json
-src/parsers/car_region_progress.json  # ╨┐╤А╨╛╨│╤А╨╡╤Б╤Б ╨┐╨░╤А╤Б╨╡╤А╨░ (cars)
+src/parsers/car_region_progress.json  # прогресс парсера (cars)
 
-# ╨Я╤А╨╛╤Д╨╕╨╗╨╕ Chrome
+# Профили Chrome
 src/parsers/trucks_profile/
 src/parsers/trucks_profile/**
 src/parsers/chrome_profile/
@@ -119,7 +140,9 @@ src/parsers/chrome_profile_transport/**
 src/parsers/chrome_profile_loads/
 src/parsers/chrome_profile_loads/**
 
-# ╨Ы╨╛╨│╨╕
+# ====================================
+# Логи
+# ====================================
 *.log
 logs/
 log/
@@ -129,7 +152,7 @@ chromedriver*.log
 geckodriver.log
 
 # ====================================
-# ╨б╨║╤А╨╕╨╜╤И╨╛╤В╤Л / ╨╕╨╖╨╛╨▒╤А╨░╨╢╨╡╨╜╨╕╤П (╨╕╨│╨╜╨╛╤А╨╕╨╝ ╤В╨╛╨╗╤М╨║╨╛ ╤Б╤Л╤А╤М╤С/╨╖╨░╤Е╨▓╨░╤В╤Л)
+# Скриншоты / изображения (игнорим только сырьё/захваты)
 # ====================================
 screenshots/
 screens/
@@ -137,13 +160,13 @@ img/raw/
 images/raw/
 
 # ====================================
-# ╨Ы╨╛╨║╨░╨╗╤М╨╜╤Л╨╡ ╨║╨╛╨╜╤Д╨╕╨│╨╕ / secrets (╨╜╨╡ ╨▓ ╤А╨╡╨┐╨╛)
+# Локальные конфиги / secrets (не в репо)
 # ====================================
 .env
 .env.*
 !.env.example
 
-# ╨╛╤В╨┤╨╡╨╗╤М╨╜╤Л╨╣ secrets ╤Д╨░╨╣╨╗ (╤З╨░╤Б╤В╨╛ ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╡╤В╤Б╤П ╨▓ compose)
+# отдельный secrets файл (часто используется в compose)
 .secrets.env
 .secrets.env.*
 *.pem
@@ -157,30 +180,26 @@ images/raw/
 *.keystore
 
 # ====================================
-# Ops / DR / Evidence (╨╗╨╛╨║╨░╨╗╤М╨╜╤Л╨╡ ╨░╤А╤В╨╡╤Д╨░╨║╤В╤Л)
+# Ops / DR / Evidence (локальные артефакты)
 # ====================================
-# backup ╨┤╨░╨╝╨┐╤Л ╨╕ evidence ╨┤╨╛╨╗╨╢╨╜╤Л ╨╢╨╕╤В╤М ╨╗╨╛╨║╨░╨╗╤М╨╜╨╛ (╨║╨╛╨╝╨╝╨╕╤В╨╕╨╝ ╤В╨╛╨╗╤М╨║╨╛ ╨▓╤А╤Г╤З╨╜╤Г╤О/╤В╨╛╤З╨╡╤З╨╜╨╛ ╤З╨╡╤А╨╡╨╖ git add -f)
+# backup дампы и evidence должны жить локально (коммитим только вручную/точечно через git add -f)
 ops/_backups/**
 ops/_local/evidence/**
 ops/session/**
 
-# (╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛) ╤А╨░╨╖╤А╨╡╤И╨╕╤В╤М тАЬ╨╖╨╛╨╗╨╛╤В╤Л╨╡тАЭ ╨┤╨╛╨║╨░╨╖╨░╤В╨╡╨╗╤М╤Б╤В╨▓╨░, ╨╡╤Б╨╗╨╕ ╤А╨╡╤И╨╕╨╝ ╤Е╤А╨░╨╜╨╕╤В╤М ╨╕╤Е ╨▓ ╤А╨╡╨┐╨╛
+# (опционально) разрешить “золотые” доказательства, если решим хранить их в репо
 !ops/_local/evidence/_golden/**
 !ops/_local/evidence/_canon/**
 
 # ====================================
-# ╨Ш╨╜╨▓╨╡╨╜╤В╨░╤А╨╕╨╖╨░╤Ж╨╕╨╛╨╜╨╜╤Л╨╡ ╨╛╤В╤З╤С╤В╤Л (╨▓╨╜╤Г╤В╤А╨╡╨╜╨╜╨╕╨╡)
+# Инвентаризационные отчёты (внутренние)
 # ====================================
 PROJECT_INVENTORY.md
 project_filelist.csv
 project_candidates_delete.csv
 project_largefiles.csv
 
-# Celery schedule DB
-celerybeat-schedule
-celerybeat-schedule.db
-
-# ╨У╨╗╨╛╨▒╨░╨╗╤М╨╜╨╛ ╤А╨░╨╖╤А╨╡╤И╨░╨╡╨╝ .gitkeep ╨▓ ╨╗╤О╨▒╤Л╤Е ╨╕╨│╨╜╨╛╤А╨╕╤А╤Г╨╡╨╝╤Л╤Е ╨┐╨░╨┐╨║╨░╤Е
+# Глобально разрешаем .gitkeep в любых игнорируемых папках
 !**/.gitkeep
 
 # FlowMeta local artifacts (generated)
@@ -188,32 +207,7 @@ _contextpacks/
 _flowmeta/
 
 # --- FlowSec (gate scripts must be versioned) ---
-# Gate-╤Б╨║╤А╨╕╨┐╤В╤Л ╨┤╨╛╨╗╨╢╨╜╤Л ╨▒╤Л╤В╤М ╨Т ╨а╨Х╨Я╨Ю. ╨Ш╨│╨╜╨╛╤А╨╕╨╝ ╤В╨╛╨╗╤М╨║╨╛ ╨╕╤Е ╨╗╨╛╨║╨░╨╗╤М╨╜╤Л╨╡ ╨▓╤Л╤Е╨╛╨┤╤Л (╨╡╤Б╨╗╨╕ ╨┐╨╛╤П╨▓╤П╤В╤Б╤П).
+# Gate-скрипты должны быть В РЕПО. Игнорим только их локальные выходы (если появятся).
 scripts/pwsh/sec/_local/
 scripts/pwsh/sec/_out/
 # ----------------------------------------------
-
-# --- merged from origin/wt/sql ---
-*.egg
-pip-wheel-metadata/
-*.whl
-__pypackages__/
-.conda/
-conda/
-.vs/
-coverage.xml
-junit*.xml
-*.rdb
-# ╨Р╤А╤В╨╡╤Д╨░╨║╤В╤Л ╨╕ ╨░╨▓╤В╨╛-╨│╨╡╨╜╨╡╤А╨░╤Ж╨╕╤П (╨Э╨Х ╨▓ ╤А╨╡╨┐╨╛)
-artifacts/
-scripts/sql/fixpacks/auto/
-celerybeat.pid
-# ╨б╨║╤А╨╕╨╜╤И╨╛╤В╤Л / ╨╕╨╖╨╛╨▒╤А╨░╨╢╨╡╨╜╨╕╤П
-*.png
-*.jpg
-*.jpeg
-*.gif
-*.bmp
-*.webp
-*.tiff
-# ╨Ы╨╛╨║╨░╨╗╤М╨╜╤Л╨╡ ╨║╨╛╨╜╤Д╨╕╨│╨╕
