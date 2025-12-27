@@ -1,0 +1,46 @@
+Output format is unaligned.
+db=foxproflow; user=admin; ts=2025-12-26 10:03:10.429308+03
+server_version=15.15 (Debian 15.15-1.pgdg13+1)
+search_path="$user", public
+schema:analytics
+schema:crm
+schema:dev
+schema:ops
+schema:planner
+schema:public
+schema:sec
+matview:analytics.devfactory_task_kpi_v2
+matview:planner.planner_kpi_daily
+matview:public.vehicle_availability_mv
+migration_table:alembic_version
+migration_table:schema_migrations
+idx_top:pg_catalog.pg_proc_proname_args_nsp_index; bytes=286720
+idx_top:pg_catalog.pg_attribute_relid_attnam_index; bytes=270336
+idx_top:ops.event_log_source_ts_idx; bytes=237568
+idx_top:pg_catalog.pg_description_o_c_o_index; bytes=237568
+idx_top:pg_catalog.pg_depend_depender_index; bytes=188416
+idx_top:pg_catalog.pg_attribute_relid_attnum_index; bytes=155648
+idx_top:ops.event_log_pkey; bytes=139264
+idx_top:ops.event_log_ts_idx; bytes=139264
+idx_top:pg_catalog.pg_depend_reference_index; bytes=122880
+idx_top:ops.ops_event_log_correlation_id_idx; bytes=98304
+idx_top:pg_catalog.pg_proc_oid_index; bytes=98304
+idx_top:pg_catalog.pg_class_relname_nsp_index; bytes=81920
+idx_top:pg_catalog.pg_collation_name_enc_nsp_index; bytes=57344
+idx_top:pg_catalog.pg_type_typname_nsp_index; bytes=57344
+idx_top:pg_catalog.pg_operator_oprname_l_r_n_index; bytes=49152
+idx_top:ops.ix_ops_audit_events_action_ts; bytes=49152
+idx_top:ops.ix_ops_audit_events_actor_ts; bytes=49152
+idx_top:pg_catalog.pg_amop_fam_strat_index; bytes=49152
+idx_top:pg_catalog.pg_amop_opr_fam_index; bytes=49152
+idx_top:pg_catalog.pg_operator_oid_index; bytes=40960
+idx_top:pg_catalog.pg_collation_oid_index; bytes=40960
+idx_top:pg_catalog.pg_class_tblspc_relfilenode_index; bytes=40960
+idx_top:pg_catalog.pg_amop_oid_index; bytes=40960
+idx_top:pg_catalog.pg_amproc_fam_proc_index; bytes=40960
+idx_top:pg_catalog.pg_class_oid_index; bytes=40960
+idx_top:pg_catalog.pg_statistic_relid_att_inh_index; bytes=40960
+idx_top:pg_catalog.pg_type_oid_index; bytes=40960
+idx_top:ops.audit_events_order_ts_idx; bytes=32768
+idx_top:ops.audit_events_task_ts_idx; bytes=32768
+idx_top:pg_catalog.pg_ts_config_map_index; bytes=32768

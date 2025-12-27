@@ -1,2 +1,3 @@
 scripts/sql/verify/20251225_gate_m0_db_contract.sql
 scripts/sql/verify/20251225_gate_m0_matviews_concurrent_ready.sql
+scripts/sql/verify/20251226_migration_registries_sanity.sql
