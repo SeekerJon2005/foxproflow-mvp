@@ -1,1 +1,11 @@
-<содержимое>
+# Normalize text files
+* text=auto
+
+# SQL and suite lists should be stable across platforms (avoid CRLF/LF noise)
+*.sql text eol=lf
+scripts/sql/verify/suites/*.txt text eol=lf
+
+# PowerShell scripts: keep CRLF on Windows for better local ergonomics
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+
