@@ -1,11 +1,16 @@
-# Normalize text files
-* text=auto
+# FoxProFlow • EOL policy (stop CRLF/LF churn)
 
-# SQL and suite lists should be stable across platforms (avoid CRLF/LF noise)
+# SQL must be canonical LF
 *.sql text eol=lf
-scripts/sql/verify/suites/*.txt text eol=lf
 
-# PowerShell scripts: keep CRLF on Windows for better local ergonomics
+# Markdown / YAML / JSON also LF
+*.md  text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+
+# PowerShell scripts are CRLF (Windows friendly)
 *.ps1 text eol=crlf
-*.psm1 text eol=crlf
 
+# Shell scripts are LF
+*.sh text eol=lf
