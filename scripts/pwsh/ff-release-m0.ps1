@@ -70,10 +70,18 @@ param(
   [string]$WorkerRequiredTasksCsv = "",
   [int]$WorkerLogsSinceMin = 30,
   [switch]$SkipWorkerUnregisteredLogCheck,
-  [int]$WorkerSmokeRetries = 10,
+
+  # IMPORTANT (stability): defaults must survive cold-start after docker compose up -d / down+up
+  [int]$WorkerSmokeRetries = 40,
   [int]$WorkerSmokeSleepSec = 2,
-  [int]$WorkerPingTimeoutSec = 10,
-  [int]$WorkerInspectTimeoutSec = 20,
+  [int]$WorkerPingTimeoutSec = 20,
+  [int]$WorkerInspectTimeoutSec = 30,
+
+  # Worker readiness wait before smoke (prevents flaky "container restarting"/empty CID)
+  [switch]$SkipWorkerReadyWait,
+  [int]$WorkerReadyTimeoutSec = 0,     # 0 => auto from smoke settings
+  [int]$WorkerReadyPollSec = 2,
+  [int]$WorkerReadyLogsTail = 200,
 
   # FlowSec secrets scan (optional if script exists)
   [switch]$SkipFlowSecSecretsScan,
@@ -94,7 +102,7 @@ param(
 )
 
 # NOTE: DO NOT place any executable statements before [CmdletBinding]/param.
-$VERSION = "2025-12-26.det.v18"
+$VERSION = "2025-12-27.det.v20"
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -179,6 +187,121 @@ function Dc([string]$composeFile, [string]$projectName, [string[]]$composeArgs) 
     out  = ($out | Out-String)
     argv = ("docker " + ($argv.ToArray() -join " "))
   }
+}
+
+# -----------------------------
+# Robust container readiness helpers (cold-start stability)
+# -----------------------------
+function Try-ExtractFirstHexId([string]$text) {
+  if ([string]::IsNullOrWhiteSpace($text)) { return "" }
+  foreach ($line in ($text -split '\r?\n')) {
+    $t = (($line ?? "")).Trim()
+    if ($t -match '^[0-9a-f]{12,64}$') { return $t }
+  }
+  return ""
+}
+
+function Get-ComposeServiceCid([string]$composeFile, [string]$projectName, [string]$service) {
+  $r = Dc -composeFile $composeFile -projectName $projectName -composeArgs @("ps","-q",$service)
+  $cid = Try-ExtractFirstHexId $r.out
+  return [pscustomobject]@{ code=$r.code; cid=$cid; argv=$r.argv; out=$r.out }
+}
+
+function Inspect-ContainerState([string]$cid) {
+  $st = [ordered]@{ ok=$false; cid=$cid; state=$null; error=$null }
+  try {
+    $raw = & docker inspect -f "{{json .State}}" $cid 2>&1
+    $c = $LASTEXITCODE
+    if ($c -ne 0) {
+      $st.error = ("docker inspect failed (exit=$c): " + ($raw | Out-String))
+      return [pscustomobject]$st
+    }
+    $obj = $null
+    try { $obj = (($raw|Out-String).Trim() | ConvertFrom-Json -Depth 16) } catch { $obj = $null }
+    $st.ok = $true
+    $st.state = $obj
+    return [pscustomobject]$st
+  } catch {
+    $st.error = $_.Exception.Message
+    return [pscustomobject]$st
+  }
+}
+
+function Is-ContainerReady([object]$ins) {
+  if (-not $ins -or $ins.ok -ne $true) { return $false }
+  $s = $ins.state
+  if (-not $s) { return $false }
+  if ($s.Running -ne $true) { return $false }
+  if ($s.Restarting -eq $true) { return $false }
+  return $true
+}
+
+function Capture-ComposeLogsTail(
+  [string]$composeFile,
+  [string]$projectName,
+  [string]$service,
+  [string]$outPath,
+  [int]$tail = 200
+) {
+  try {
+    $r = Dc -composeFile $composeFile -projectName $projectName -composeArgs @("logs","--tail","$tail",$service)
+    Set-Utf8 $outPath ("argv={0}`n`n{1}`nexit_code={2}`n" -f $r.argv, $r.out, $r.code)
+  } catch {
+    try { Set-Utf8 $outPath ("ERROR: " + $_.Exception.ToString()) } catch {}
+  }
+}
+
+function Wait-ComposeServiceReady(
+  [string]$composeFile,
+  [string]$projectName,
+  [string]$service,
+  [int]$timeoutSec,
+  [int]$pollSec,
+  [string]$evidenceDir,
+  [string]$label,
+  [int]$logsTail = 200
+) {
+  $deadline = (Get-Date).AddSeconds($timeoutSec)
+  $log = Join-Path $evidenceDir ("wait_{0}_ready.log" -f $label)
+  $lastStatePath = Join-Path $evidenceDir ("wait_{0}_last_state.json" -f $label)
+  $lastCidPath = Join-Path $evidenceDir ("wait_{0}_last_cid.txt" -f $label)
+
+  Set-Utf8 $log ("ts={0}`nservice={1}`ntimeout_sec={2}`npoll_sec={3}`n" -f (Now-Iso), $service, $timeoutSec, $pollSec)
+
+  while ((Get-Date) -lt $deadline) {
+    $psq = Get-ComposeServiceCid -composeFile $composeFile -projectName $projectName -service $service
+    $cid = $psq.cid
+    Set-Utf8 $lastCidPath ($cid ?? "")
+
+    if ([string]::IsNullOrWhiteSpace($cid)) {
+      Add-Utf8 $log ("[{0}] cid=EMPTY (ps -q) code={1}" -f (Now-Iso), $psq.code)
+      Start-Sleep -Seconds $pollSec
+      continue
+    }
+
+    $ins = Inspect-ContainerState $cid
+    try { Set-Utf8 $lastStatePath (($ins | ConvertTo-Json -Depth 30)) } catch {}
+
+    if (Is-ContainerReady $ins) {
+      Add-Utf8 $log ("[{0}] cid={1} READY (running=true restarting=false)" -f (Now-Iso), $cid)
+      return $true
+    }
+
+    $s = $ins.state
+    $status = if ($s -and $s.Status) { $s.Status } else { "unknown" }
+    $running = if ($s) { [bool]$s.Running } else { $false }
+    $restarting = if ($s) { [bool]$s.Restarting } else { $false }
+    $exitc = if ($s) { [int]($s.ExitCode ?? 0) } else { 0 }
+    $oom = if ($s) { [bool]($s.OOMKilled ?? $false) } else { $false }
+    Add-Utf8 $log ("[{0}] cid={1} status={2} running={3} restarting={4} exit={5} oom={6}" -f (Now-Iso), $cid, $status, $running, $restarting, $exitc, $oom)
+
+    Start-Sleep -Seconds $pollSec
+  }
+
+  Capture-ComposeLogsTail -composeFile $composeFile -projectName $projectName -service $service `
+    -outPath (Join-Path $evidenceDir ("wait_{0}_logs_tail.txt" -f $label)) -tail $logsTail
+
+  throw "Service '$service' not ready within ${timeoutSec}s (see $log)"
 }
 
 function Extract-ServiceNames([string]$text) {
@@ -555,7 +678,7 @@ function BestEffort-TagRollbackImage([string]$composeFile, [string]$projectName,
     $q = Dc -composeFile $composeFile -projectName $projectName -composeArgs @("ps","-q","api")
     Add-Utf8 $log ("argv={0}`n{1}`nexit_code={2}`n" -f $q.argv, $q.out, $q.code)
 
-    $cid = ($q.out.Trim() -split '\r?\n' | Select-Object -First 1).Trim()
+    $cid = Try-ExtractFirstHexId $q.out
     if ([string]::IsNullOrWhiteSpace($cid)) {
       $src = "foxproflow/app:latest"
       $dst = ("foxproflow/app:rollback_{0}" -f $releaseId)
@@ -868,7 +991,17 @@ $flowsec = [ordered]@{ skipped=$true; ok=$null; script=$null; log=$null }
 $freshDrill = [ordered]@{ skipped=$true; keep_db=[bool]$KeepFreshDbDrillDb; sql_worktree=$null; script=$null; evidence_dir=$null; ok=$null }
 $workerSmoke = [ordered]@{
   skipped=$true; ok=$null; script=$null; evidence_dir=$null;
-  required_tasks_csv=$WorkerRequiredTasksCsv; logs_since_min=[int]$WorkerLogsSinceMin; skip_unregistered_log_check=[bool]$SkipWorkerUnregisteredLogCheck
+  required_tasks_csv=$WorkerRequiredTasksCsv;
+  logs_since_min=[int]$WorkerLogsSinceMin;
+  skip_unregistered_log_check=[bool]$SkipWorkerUnregisteredLogCheck;
+  retries=[int]$WorkerSmokeRetries;
+  sleep_sec=[int]$WorkerSmokeSleepSec;
+  ping_timeout_sec=[int]$WorkerPingTimeoutSec;
+  inspect_timeout_sec=[int]$WorkerInspectTimeoutSec;
+  skip_worker_ready_wait=[bool]$SkipWorkerReadyWait;
+  worker_ready_timeout_sec=[int]$WorkerReadyTimeoutSec;
+  worker_ready_poll_sec=[int]$WorkerReadyPollSec;
+  worker_ready_logs_tail=[int]$WorkerReadyLogsTail
 }
 
 function Step([string]$name, [int]$failExitCode, [scriptblock]$fn) {
@@ -898,23 +1031,38 @@ Set-Utf8 (Join-Path $evidenceDir "release_meta.json") (
     compose_file = $ComposeFile
     project_name = $ProjectName
     migrate_mode_requested = $MigrateMode
+
     verify_gate_m0 = [bool]($VerifyDbContract -or $VerifyDbContractPlus)
     verify_gate_m0_plus = [bool]$VerifyDbContractPlus
+
     skip_fresh_db_drill = [bool]$SkipFreshDbDrill
     keep_fresh_db_drill_db = [bool]$KeepFreshDbDrillDb
     fresh_db_sql_worktree = $FreshDbSqlWorktree
+
     skip_worker_tasks_smoke = [bool]$SkipWorkerTasksSmoke
     worker_required_tasks_csv = $WorkerRequiredTasksCsv
     worker_logs_since_min = [int]$WorkerLogsSinceMin
     skip_worker_unregistered_log_check = [bool]$SkipWorkerUnregisteredLogCheck
+
+    worker_smoke_retries = [int]$WorkerSmokeRetries
+    worker_smoke_sleep_sec = [int]$WorkerSmokeSleepSec
+    worker_ping_timeout_sec = [int]$WorkerPingTimeoutSec
+    worker_inspect_timeout_sec = [int]$WorkerInspectTimeoutSec
+
+    skip_worker_ready_wait = [bool]$SkipWorkerReadyWait
+    worker_ready_timeout_sec = [int]$WorkerReadyTimeoutSec
+    worker_ready_poll_sec = [int]$WorkerReadyPollSec
+    worker_ready_logs_tail = [int]$WorkerReadyLogsTail
+
     no_backup = [bool]$NoBackup
     no_build  = [bool]$NoBuild
     no_deploy = [bool]$NoDeploy
     no_smoke  = [bool]$NoSmoke
     no_rollback = [bool]$NoRollback
+
     skip_flowsec_secrets_scan = [bool]$SkipFlowSecSecretsScan
     git_pre = $gitPre
-  } | ConvertTo-Json -Depth 80)
+  } | ConvertTo-Json -Depth 100)
 )
 
 try {
@@ -982,7 +1130,6 @@ try {
     Write-Warn "NoRollback: skipping rollback story"
   }
 
-  # FRESH DB DRILL (bootstrap_min)
   Write-Step "FRESH DB DRILL (bootstrap_min)"
   if ($SkipFreshDbDrill) {
     $freshDrill.skipped = $true
@@ -1236,11 +1383,38 @@ try {
   } else {
     Step "worker_tasks_smoke" 11 {
       $workerSmoke.skipped = $false
-      $res = Invoke-WorkerTasksSmoke -composeFile $ComposeFile -projectName $ProjectName -evidenceDir $evidenceDir -evSuffix $evSuffix
-      $workerSmoke.ok = $true
-      $workerSmoke.script = $res.script
-      $workerSmoke.evidence_dir = $res.evidence_dir
-      Write-Ok "Worker tasks smoke PASS"
+
+      # Deterministic wait for worker readiness (prevents flakiness right after up/down)
+      if (-not $SkipWorkerReadyWait) {
+        $autoTimeout = [Math]::Max(60, ($WorkerSmokeRetries * $WorkerSmokeSleepSec) + $WorkerPingTimeoutSec + 60)
+        $t = if ($WorkerReadyTimeoutSec -gt 0) { $WorkerReadyTimeoutSec } else { $autoTimeout }
+        $p = [Math]::Max(1, [int]$WorkerReadyPollSec)
+
+        try {
+          Wait-ComposeServiceReady -composeFile $ComposeFile -projectName $ProjectName -service "worker" `
+            -timeoutSec $t -pollSec $p -evidenceDir $evidenceDir -label "worker" -logsTail $WorkerReadyLogsTail | Out-Null
+        } catch {
+          Capture-ComposeLogsTail -composeFile $ComposeFile -projectName $ProjectName -service "worker" `
+            -outPath (Join-Path $evidenceDir "worker_logs_tail_on_smoke_fail.txt") -tail $WorkerReadyLogsTail
+          Capture-ComposeLogsTail -composeFile $ComposeFile -projectName $ProjectName -service "beat" `
+            -outPath (Join-Path $evidenceDir "beat_logs_tail_on_smoke_fail.txt") -tail $WorkerReadyLogsTail
+          throw
+        }
+      }
+
+      try {
+        $res = Invoke-WorkerTasksSmoke -composeFile $ComposeFile -projectName $ProjectName -evidenceDir $evidenceDir -evSuffix $evSuffix
+        $workerSmoke.ok = $true
+        $workerSmoke.script = $res.script
+        $workerSmoke.evidence_dir = $res.evidence_dir
+        Write-Ok "Worker tasks smoke PASS"
+      } catch {
+        Capture-ComposeLogsTail -composeFile $ComposeFile -projectName $ProjectName -service "worker" `
+          -outPath (Join-Path $evidenceDir "worker_logs_tail_on_smoke_fail.txt") -tail $WorkerReadyLogsTail
+        Capture-ComposeLogsTail -composeFile $ComposeFile -projectName $ProjectName -service "beat" `
+          -outPath (Join-Path $evidenceDir "beat_logs_tail_on_smoke_fail.txt") -tail $WorkerReadyLogsTail
+        throw
+      }
     }
   }
 
@@ -1335,7 +1509,7 @@ try {
   }
 
   try {
-    $summaryJson = ($summary | ConvertTo-Json -Depth 120)
+    $summaryJson = ($summary | ConvertTo-Json -Depth 100)
     Set-Utf8 (Join-Path $evidenceDir "release_m0_summary.json") $summaryJson
     Set-Utf8 (Join-Path $evidenceDir "summary.json") $summaryJson
   } catch { }
@@ -1370,3 +1544,4 @@ if ($ok -and $exitCode -eq 0) {
   Write-Fail ("M0 FAILED (exit={0}): {1}" -f $exitCode, $failReason)
   exit $exitCode
 }
+
