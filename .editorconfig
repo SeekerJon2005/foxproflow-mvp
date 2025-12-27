@@ -1,15 +1,11 @@
 root = true
 
-# Общие правила
 [*]
 charset = utf-8
 insert_final_newline = true
-trim_trailing_whitespace = true
 
-# Код и текстовые файлы → LF
-[*.{py,md,txt,json,jsonl,sql,yml,yaml,csv,sh,svg}]
+[*.sql]
 end_of_line = lf
 
-# Windows-скрипты → CRLF
-[*.{bat,cmd,ps1}]
+[*.ps1]
 end_of_line = crlf
