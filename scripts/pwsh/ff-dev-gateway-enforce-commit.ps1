@@ -8,20 +8,6 @@ Deny-by-default:
 - FlowSec P0: STAGED changes MUST pass secrets/PII scan (ff-sec-logscan-repo.ps1)
 - DevTask must exist (API or DB fallback)
 
-Env knobs:
-- FF_API_BASE / API_BASE                    : API base (default http://127.0.0.1:8080)
-- FF_COMPOSE_FILE                           : absolute path to docker-compose.yml (recommended)
-- FF_DB_SERVICE                             : compose service name for Postgres (default "postgres")
-- FF_COMPOSE_PROJECT / COMPOSE_PROJECT_NAME : compose project name (-p ...)
-- FF_GATEWAY_DEBUG=1                        : verbose logs
-
-FlowSec knobs:
-- FF_GATEWAY_PII_SCAN=1                     : scan PII too (optional)
-- FF_GATEWAY_SECSCAN=0                      : disable secscan ONLY with BREAKGLASS (NOT recommended)
-- FF_GATEWAY_BREAKGLASS=1                   : allow bypass of SECSCAN only
-- FF_GATEWAY_BREAKGLASS_REASON              : required when BREAKGLASS=1
-- FF_GATEWAY_SECSCAN_EVIDENCE_DIR           : default ops/_local/evidence/secscan
-
 Exit codes:
   0 allow
   2 missing [DEVTASK:N]
@@ -50,8 +36,6 @@ function Is-True([string]$v) {
   return ($t -in @("1","true","yes","y","on"))
 }
 
-function DebugEnabled() { return (Is-True $env:FF_GATEWAY_DEBUG) }
-
 function Trunc([string]$s, [int]$maxLen = 240) {
   if (-not $s) { return "" }
   $t = $s.Trim()
@@ -61,16 +45,14 @@ function Trunc([string]$s, [int]$maxLen = 240) {
 
 function Get-RepoRoot() {
   $root = (& git rev-parse --show-toplevel 2>$null)
-  if ($LASTEXITCODE -ne 0 -or -not $root) { throw "git rev-parse --show-toplevel failed (run inside a git repo)." }
+  if ($LASTEXITCODE -ne 0 -or -not $root) { throw "git rev-parse --show-toplevel failed" }
   return $root.Trim()
 }
 
 function Get-CommitMsgFile([string]$p) {
   if ($p -and (Test-Path -LiteralPath $p)) { return (Resolve-Path -LiteralPath $p).Path }
-
   $cand = (& git rev-parse --git-path COMMIT_EDITMSG 2>$null)
   if ($LASTEXITCODE -eq 0 -and $cand -and (Test-Path -LiteralPath $cand)) { return (Resolve-Path -LiteralPath $cand).Path }
-
   throw "Commit message file not found."
 }
 
@@ -88,7 +70,6 @@ function Get-ApiBase() {
 
 function Try-ApiCheck([string]$baseUrl, [int]$taskId) {
   $url = "$baseUrl/api/devfactory/tasks/$taskId"
-
   $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
   if ($curl) {
     $tmpBody = [System.IO.Path]::GetTempFileName()
@@ -98,33 +79,20 @@ function Try-ApiCheck([string]$baseUrl, [int]$taskId) {
         -sS --connect-timeout 2 -m 5 `
         -H "Accept: application/json" `
         -o $tmpBody -w "%{http_code}" $url 2> $tmpErr
-
-      $curlExit = $LASTEXITCODE
-
       $codeInt = 0
       if ($httpCode -match '^\d{3}$') { $codeInt = [int]$httpCode }
-
-      return [pscustomobject]@{
-        ok   = ($curlExit -eq 0 -and $codeInt -ge 200 -and $codeInt -lt 300)
-        code = $codeInt
-        url  = $url
-      }
+      return [pscustomobject]@{ ok = ($LASTEXITCODE -eq 0 -and $codeInt -ge 200 -and $codeInt -lt 300); code = $codeInt; url = $url }
     } finally {
       Remove-Item -Force -ErrorAction SilentlyContinue $tmpBody
       Remove-Item -Force -ErrorAction SilentlyContinue $tmpErr
     }
   }
-
   try {
     $r = Invoke-WebRequest -Uri $url -Method GET -TimeoutSec 5 -Headers @{ Accept = "application/json" } -SkipHttpErrorCheck
     $code = [int]$r.StatusCode
-    return [pscustomobject]@{
-      ok   = ($code -ge 200 -and $code -lt 300)
-      code = $code
-      url  = $url
-    }
+    return [pscustomobject]@{ ok = ($code -ge 200 -and $code -lt 300); code = $code; url = $url }
   } catch {
-    return [pscustomobject]@{ ok=$false; code=0; url=$url }
+    return [pscustomobject]@{ ok = $false; code = 0; url = $url }
   }
 }
 
@@ -132,17 +100,9 @@ function Resolve-ComposeFile([string]$repoRoot) {
   if ($env:FF_COMPOSE_FILE -and (Test-Path -LiteralPath $env:FF_COMPOSE_FILE)) {
     return (Resolve-Path -LiteralPath $env:FF_COMPOSE_FILE).Path
   }
-
   $cand = Join-Path $repoRoot "docker-compose.yml"
   if (Test-Path -LiteralPath $cand) { return (Resolve-Path -LiteralPath $cand).Path }
-
-  $parent = Split-Path -Parent $repoRoot
-  if ($parent) {
-    $cand2 = Join-Path $parent "A-run\docker-compose.yml"
-    if (Test-Path -LiteralPath $cand2) { return (Resolve-Path -LiteralPath $cand2).Path }
-  }
-
-  throw "docker-compose.yml not found. Set FF_COMPOSE_FILE to an absolute path."
+  throw "docker-compose.yml not found (set FF_COMPOSE_FILE)."
 }
 
 function Get-ComposeProjectArgs() {
@@ -157,23 +117,18 @@ function Db-HasTask([string]$composeFile, [int]$taskId) {
   $svc = $(if ($env:FF_DB_SERVICE) { $env:FF_DB_SERVICE } else { "postgres" })
   $projArgs = Get-ComposeProjectArgs
   $dockerCmd = (Get-Command docker -ErrorAction Stop).Source
-
   $psqlCmd =
     'psql -U "${POSTGRES_USER:-admin}" -d "${POSTGRES_DB:-foxproflow}" ' +
     '-tA -P pager=off -v ON_ERROR_STOP=1 ' +
     '-c "SELECT 1 FROM dev.dev_task WHERE id = ' + $taskId + ' LIMIT 1;"'
-
   $argv = @("compose","--ansi","never","-f",$composeFile) + $projArgs + @("exec","-T",$svc,"sh","-lc",$psqlCmd)
-
-  if (DebugEnabled) { GW ("DB argv: docker {0}" -f (($argv -join " ") | Trunc 600)) }
-
   $out = & $dockerCmd @argv 2>&1
   if ($LASTEXITCODE -ne 0) { return $false }
   return (($out | Out-String).Trim() -eq "1")
 }
 
 function Resolve-SecScanPath([string]$repoRoot) {
-  # Prefer local path near this gateway script
+  # Самый надёжный путь: рядом с gateway (в scripts/pwsh)
   $local = Join-Path $PSScriptRoot "ff-sec-logscan-repo.ps1"
   if (Test-Path -LiteralPath $local) { return $local }
 
@@ -185,9 +140,9 @@ function Resolve-SecScanPath([string]$repoRoot) {
 
 function Run-SecScan([string]$repoRoot) {
   if (($env:FF_GATEWAY_SECSCAN ?? "").Trim() -eq "0") {
-    if (-not (Is-True $env:FF_GATEWAY_BREAKGLASS)) { throw "SECSCAN disabled but BREAKGLASS not provided. Refusing." }
+    if (-not (Is-True $env:FF_GATEWAY_BREAKGLASS)) { throw "SECSCAN disabled but BREAKGLASS not provided." }
     $reason = ($env:FF_GATEWAY_BREAKGLASS_REASON ?? "").Trim()
-    if (-not $reason) { throw "BREAKGLASS=1 requires FF_GATEWAY_BREAKGLASS_REASON (non-empty)." }
+    if (-not $reason) { throw "BREAKGLASS=1 requires FF_GATEWAY_BREAKGLASS_REASON." }
     GWW ("BREAKGLASS: SECSCAN disabled. reason={0}" -f (Trunc $reason 200))
     return
   }
@@ -225,7 +180,7 @@ if (-not $m.Success) {
 $taskId = [int]$m.Groups[1].Value
 GW ("Найден DevFactory task id: {0}" -f $taskId)
 
-# 0) FlowSec secscan (staged)
+# 0) FlowSec gate
 try {
   $repoRoot = Get-RepoRoot
   Run-SecScan $repoRoot
@@ -234,7 +189,7 @@ try {
   exit 4
 }
 
-# 1) DevTask check (API, then DB fallback)
+# 1) DevTask check (API -> DB)
 $apiBase = Get-ApiBase
 $api = Try-ApiCheck -baseUrl $apiBase -taskId $taskId
 GW ("Проверяю задачу через API: {0}" -f $api.url)
@@ -246,7 +201,6 @@ if ($api.ok) {
 }
 
 GW "API не подтвердил задачу. Fallback: проверяю в DB (dev.dev_task)..."
-
 try {
   $repoRoot2 = Get-RepoRoot
   $composeFile = Resolve-ComposeFile $repoRoot2
@@ -254,9 +208,7 @@ try {
     GW "DevFactory задача найдена в DB, commit разрешён."
     exit 0
   }
-} catch {
-  if (DebugEnabled) { GWW $_.Exception.Message }
-}
+} catch { }
 
-GW "FAIL: задача НЕ найдена ни через API, ни в DB (dev.dev_task)."
+GW "FAIL: задача НЕ найдена ни через API, ни в DB."
 exit 3
