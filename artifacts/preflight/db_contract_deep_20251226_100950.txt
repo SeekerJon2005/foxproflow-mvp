@@ -1,2 +1,0 @@
-Output format is unaligned.
-db=foxproflow; user=admin; ts=2025-12-26 10:09:50.938038+03

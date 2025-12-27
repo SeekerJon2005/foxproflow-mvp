@@ -7,23 +7,37 @@ __pycache__/
 *.pyd
 *.so
 *.egg-info/
+*.egg
 dist/
 build/
+pip-wheel-metadata/
+*.whl
+__pypackages__/
 
 # Виртуальные окружения
 .venv/
 venv/
 env/
+.conda/
+conda/
 
 # ====================================
 # IDE / ОС
 # ====================================
 .idea/
 .vscode/
+.vs/
 *.iml
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Временные/бэкап файлы редакторов
+*.swp
+*.swo
+*.tmp
+*.bak
+*.orig
 
 # ====================================
 # Кеши и тестовые артефакты
@@ -33,13 +47,11 @@ desktop.ini
 .ruff_cache/
 .ipynb_checkpoints/
 .coverage*
+coverage.xml
 htmlcov/
-
-# Временные/бэкап файлы редакторов
-*.swp
-*.swo
-*.tmp
-*.bak
+.tox/
+.nox/
+junit*.xml
 
 # ====================================
 # Базы и кеши
@@ -50,6 +62,17 @@ data/models/
 *.sqlite3
 *.db-journal
 *.db
+*.rdb
+
+# ====================================
+# Артефакты и авто-генерация (НЕ в репо)
+# ====================================
+artifacts/
+scripts/sql/fixpacks/auto/
+
+# Celery schedule DB
+celerybeat-schedule
+celerybeat.pid
 
 # ====================================
 # Парсер: рабочие артефакты (не в репо)
@@ -91,8 +114,11 @@ src/parsers/chrome_profile_freights/**
 src/parsers/chrome_profile_transport/
 src/parsers/chrome_profile_transport/**
 src/parsers/chrome_profile_loads/
+src/parsers/chrome_profile_loads/**
 
+# ====================================
 # Логи
+# ====================================
 *.log
 logs/
 log/
@@ -130,9 +156,6 @@ PROJECT_INVENTORY.md
 project_filelist.csv
 project_candidates_delete.csv
 project_largefiles.csv
-
-# Celery schedule DB
-celerybeat-schedule
 
 # Глобально разрешаем .gitkeep в любых игнорируемых папках
 !**/.gitkeep
