@@ -271,10 +271,42 @@ ENABLE_BEAT_HEARTBEAT = _env_bool("ENABLE_BEAT_HEARTBEAT", False)
 FF_CELERY_STRICT_TASKS = _env_bool("FF_CELERY_STRICT_TASKS", _is_celery_worker_or_beat())
 
 # ---------------------------------------------------------------------
+# Package prefix helpers (avoid hardcoding "src.worker")
+# ---------------------------------------------------------------------
+
+_WORKER_PKG = (__package__ or "src.worker").strip(".")
+
+
+def _mod(rel: str) -> str:
+    """Build full module name inside worker package."""
+    rel = (rel or "").strip()
+    if not rel:
+        return _WORKER_PKG
+    if rel.startswith(_WORKER_PKG + ".") or rel == _WORKER_PKG:
+        return rel
+    # If someone passed absolute src.worker.* but package name differs, rewrite it.
+    if rel.startswith("src.worker."):
+        tail = rel.split("src.worker.", 1)[1]
+        return f"{_WORKER_PKG}.{tail}"
+    return f"{_WORKER_PKG}.{rel}"
+
+
+def _norm_import_name(name: str) -> str:
+    n = (name or "").strip()
+    if not n:
+        return n
+    if n.startswith("."):
+        # relative-like: ".tasks_ops" -> worker_pkg + "tasks_ops"
+        return _mod(n.lstrip("."))
+    return n
+
+
+# ---------------------------------------------------------------------
 # Create Celery app
 # ---------------------------------------------------------------------
 
 app = Celery("foxproflow", broker=CELERY_BROKER_URL, backend=CELERY_RESULT_BACKEND)
+celery_app = app  # compatibility: celery -A ...:celery_app
 
 # Make app the default/current in THIS process (important for any shared_task usage)
 try:
@@ -349,12 +381,14 @@ CRITICAL_TASK_NAMES = [
     TASK_DEVFACTORY_COMMERCIAL,
 ]
 
-BASE_MODULES = [
-    "src.worker.register_tasks",          # schedule anchors + legacy imports
-    "src.worker.tasks_ops",               # ops tasks
-    "src.worker.tasks.devfactory_commercial",  # commercial runner
-    # NOTE: we do NOT rely on shared_task modules here for Gate tasks anymore
+# Anchor modules: keep minimal and deterministic.
+# Use package-relative names to avoid hardcoded "src.worker" coupling.
+BASE_MODULES_REL = [
+    "register_tasks",                 # beat anchors + schedule seeds
+    "tasks_ops",                      # ops tasks (watchdog/alerts/heartbeat)
+    "tasks.devfactory_commercial",    # commercial runner implementation
 ]
+BASE_MODULES = [_mod(x) for x in BASE_MODULES_REL]
 
 
 def _split_modules(s: str) -> list[str]:
@@ -377,8 +411,8 @@ def _dedupe(seq: list[str]) -> list[str]:
     return out
 
 
-ENV_IMPORTS = _split_modules(os.getenv("CELERY_IMPORTS", ""))
-ENV_INCLUDE = _split_modules(os.getenv("CELERY_INCLUDE", ""))
+ENV_IMPORTS = [_norm_import_name(x) for x in _split_modules(os.getenv("CELERY_IMPORTS", ""))]
+ENV_INCLUDE = [_norm_import_name(x) for x in _split_modules(os.getenv("CELERY_INCLUDE", ""))]
 
 MODULES = _dedupe(BASE_MODULES + ENV_IMPORTS + ENV_INCLUDE)
 try:
@@ -415,7 +449,7 @@ def _has_task(name: str) -> bool:
 
 def _connect_pg():
     # late import -> prevents accidental cycles
-    from src.worker.pg_connect import _connect_pg as _cp
+    from .pg_connect import _connect_pg as _cp
 
     return _cp()
 
@@ -445,11 +479,20 @@ def _set_local_timeouts(cur, stmt_ms_env: str, lock_ms_env: str) -> None:
 # ---------------------------------------------------------------------
 
 
+def _safe_jsonable(v: Any) -> Any:
+    try:
+        json.dumps(v, ensure_ascii=False)
+        return v
+    except Exception:
+        return repr(v)
+
+
 def _register_gate_tasks() -> None:
     """
     Define Gate-critical tasks directly in this module using app.task.
     This guarantees they exist in the *live worker registry* (`inspect registered`).
     """
+
     # planner.kpi.snapshot
     if not _has_task(TASK_PLANNER_KPI_SNAPSHOT):
 
@@ -602,6 +645,74 @@ def _register_gate_tasks() -> None:
                 except Exception:
                     pass
 
+    # devfactory.commercial.run_order (wrapper ensures the name is registered)
+    if not _has_task(TASK_DEVFACTORY_COMMERCIAL):
+
+        @app.task(name=TASK_DEVFACTORY_COMMERCIAL, bind=True, acks_late=True, ignore_result=False)
+        def _devfactory_commercial_run_order(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+            ts0 = _utc_now_iso()
+            t0 = time.perf_counter()
+            tid = _task_id(self)
+
+            try:
+                mod = importlib.import_module(_mod("tasks.devfactory_commercial"))
+                fn = getattr(mod, "run_order", None) or getattr(mod, "devfactory_commercial_run_order", None)
+                if callable(fn):
+                    res = fn(*args, **kwargs)
+                    latency_ms = int((time.perf_counter() - t0) * 1000)
+                    return {"ok": True, "ts": ts0, "task_id": tid, "latency_ms": latency_ms, "result": _safe_jsonable(res)}
+
+                raise RuntimeError(
+                    "devfactory.commercial.run_order wrapper: no callable run_order/devfactory_commercial_run_order "
+                    f"in module {_mod('tasks.devfactory_commercial')}"
+                )
+            except Exception as e:  # noqa: BLE001
+                latency_ms = int((time.perf_counter() - t0) * 1000)
+                log.exception("%s failed: %s", TASK_DEVFACTORY_COMMERCIAL, e)
+                return {"ok": False, "ts": ts0, "task_id": tid, "latency_ms": latency_ms, "error": str(e)}
+
+    # Optional: schedule names should also be registered (avoid "discarded as unregistered")
+    for name in ("ops.queue.watchdog", "ops.alerts.sla", "ops.beat.heartbeat"):
+        if _has_task(name):
+            continue
+
+        @app.task(name=name, bind=True, acks_late=True, ignore_result=False)
+        def _ops_wrapper(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+            ts0 = _utc_now_iso()
+            t0 = time.perf_counter()
+            tid = _task_id(self)
+            task_name = getattr(getattr(self, "request", None), "task", name)
+
+            # Best-effort: try delegate to tasks_ops if there is a callable with matching semantics.
+            try:
+                mod = importlib.import_module(_mod("tasks_ops"))
+                # conventional mapping
+                cand = None
+                if task_name == "ops.queue.watchdog":
+                    cand = getattr(mod, "queue_watchdog", None)
+                elif task_name == "ops.alerts.sla":
+                    cand = getattr(mod, "alerts_sla", None) or getattr(mod, "sla_alerts", None)
+                elif task_name == "ops.beat.heartbeat":
+                    cand = getattr(mod, "beat_heartbeat", None)
+
+                if callable(cand):
+                    res = cand(*args, **kwargs)
+                    latency_ms = int((time.perf_counter() - t0) * 1000)
+                    return {"ok": True, "ts": ts0, "task_id": tid, "latency_ms": latency_ms, "result": _safe_jsonable(res)}
+
+                latency_ms = int((time.perf_counter() - t0) * 1000)
+                return {
+                    "ok": True,
+                    "ts": ts0,
+                    "task_id": tid,
+                    "latency_ms": latency_ms,
+                    "note": f"wrapper executed (no delegate found in {_mod('tasks_ops')})",
+                }
+            except Exception as e:  # noqa: BLE001
+                latency_ms = int((time.perf_counter() - t0) * 1000)
+                log.exception("%s wrapper failed: %s", task_name, e)
+                return {"ok": False, "ts": ts0, "task_id": tid, "latency_ms": latency_ms, "error": str(e)}
+
 
 # ---------------------------------------------------------------------
 # Minimal beat schedule (kept lightweight; main schedule anchored by register_tasks)
@@ -670,12 +781,19 @@ def _mask_url(url: str) -> str:
     if not url:
         return url
     try:
+        # mask redis password
         if url.startswith("redis://") and "@" in url:
             _pre, rest = url.split("redis://", 1)
             if "@" in rest and ":" in rest.split("@", 1)[0]:
                 creds, host = rest.split("@", 1)
                 user = creds.split(":", 1)[0]
                 return f"redis://{user}:{'***'}@{host}"
+        # mask amqp password (best-effort)
+        if url.startswith("amqp://") and "@" in url and ":" in url.split("://", 1)[1].split("@", 1)[0]:
+            pre, rest = url.split("://", 1)
+            creds, host = rest.split("@", 1)
+            user = creds.split(":", 1)[0]
+            return f"{pre}://{user}:{'***'}@{host}"
     except Exception:
         pass
     return url
@@ -683,6 +801,7 @@ def _mask_url(url: str) -> str:
 
 def celery_env_summary() -> Dict[str, Any]:
     return {
+        "worker_pkg": _WORKER_PKG,
         "in_docker": _in_docker(),
         "broker": _mask_url(CELERY_BROKER_URL),
         "backend": _mask_url(CELERY_RESULT_BACKEND),
@@ -717,7 +836,6 @@ def _enforce_gate_registry(stage: str) -> None:
     if missing:
         log.error("celery: live registry missing critical tasks (%s): %s", stage, ", ".join(missing))
         if FF_CELERY_STRICT_TASKS:
-            # Fail-fast ONLY in worker/beat (default), not in API import.
             raise RuntimeError(f"celery critical tasks missing ({stage}): {', '.join(missing)}")
 
 
@@ -742,10 +860,10 @@ try:
 except Exception:
     pass
 
-# Optional: force bind confirm
+# Optional: force bind confirm (keep import-safe)
 try:
-    from src.worker.ff_force_bind_confirm import *  # noqa: F401,F403
+    from .ff_force_bind_confirm import *  # noqa: F401,F403
 except Exception:
     pass
 
-__all__ = ["app", "celery_env_summary", "print_celery_env_summary", "_connect_pg"]
+__all__ = ["app", "celery_app", "celery_env_summary", "print_celery_env_summary", "_connect_pg"]
